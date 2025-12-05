@@ -1,0 +1,60 @@
+THE ROLE & THE TEAM
+Have you ever been deterred from buying the product you like on Zalando because of incomplete product information? Have you ever received products that don't look similar to the image on the website, that you have to return and ask for a refund? At Zalando, we strive to ensure a smooth customer experience and prevent such things from happening. If you want to help Zalando build the next-Gen solution to monitor assortment performance, and identify poorly performed products (e.g. high returns) or bad actors, come join us! 
+
+INCLUSIVE BY DESIGN
+
+At Zalando, our vision is to be inclusive by design. And this vision starts with our
+hiring - we do not discriminate on the basis of gender identity, sexual orientation, personal expression, ethnicity, religious belief, or disability status. You are welcome to leave out your picture, age, or marital status from your application. We only assess candidates on their qualifications and merit.
+ 
+
+We want to provide you with a great candidate experience. Feel free to inform us of any accommodations you may need, so we can best support you throughout the hiring process.
+ 
+
+do.BETTER - our diversity & inclusion strategy:
+https://corporate.zalando.com/en/our-impact/dobetter-our-diversity-and-inclusion- strategy
+
+WHAT WE’D LOVE YOU TO DO (AND LOVE DOING)
+Actively contribute to the team roadmap, and work closely with product managers and engineers to identify areas of opportunity and resource requirements to deliver impactful projects 
+
+Conceptualize, prototype, and productionize state-of-the-art anomaly detection systems. You enjoy finding root causes and solutions to new complex problems and don’t mind getting your hands dirty (with pen and paper or in your IDE of choice).
+
+Communicate technical problems and results effectively with other team members and also with (less technical) stakeholders. Educate them about your products and solutions. 
+
+Be the owner of the whole development cycle of algorithms - from opportunity discovery to production. Iteratively improve models and explore the art of possibility (e.g. new data sources, new ways of structuring the problem)
+
+Build model pipelines and streamline analysis processes, using common programming tools (e.g. Python, R, Scala, SQL, PyTorch, Tensorflow etc.)
+
+WE’D LOVE TO MEET YOU IF
+Master degree or above (PhD) in data science, statistics, mathematics, physics, economics or a related quantitative discipline with a strong theoretical foundation in machine learning methodologies. Command of causal inference and econometrics is a big plus.
+
+At least 3 years of industry experience (1 years with PhD degree) in developing anomaly detection and risk scoring, using both statistical methods and machine learning techniques. 
+
+Extensive experience with Python and its associated data science libraries, including writing production quality code (not just notebooks). Proficiency with Databricks/Spark is a plus.
+
+Excellent verbal and written communication skills with a curious and self-starter mindset. Ability to unblock yourself, but also proactively request support when needed to remove roadblocks
+
+OUR OFFER
+ 
+Zalando provides a range of benefits, here’s an overview of what you can expect. Ask your Talent Acquisition Partner to learn more about what we offer.
+
+Employee shares program
+
+40% off fashion and beauty products sold and shipped by Zalando, 30% off Lounge by Zalando, discounts from external partners
+
+2 paid volunteering days a year
+
+Hybrid working model with up to 60% remote per week, actual practice is up to each team to best support their collaboration
+
+Work from abroad for up to 30 working days a year
+
+27 days of vacation a year to start for full-time employees
+
+Relocation assistance available (subject to prior agreement)
+
+Family services, including counseling and support
+
+Health and wellbeing options (including Wellhub, formerly Gympass)
+
+Mental health support and coaching available
+
+Drive your development through our training platform and biannual peer-to-peer review

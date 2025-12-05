@@ -1,0 +1,43 @@
+About the job
+As the world’s pioneering local delivery platform, our mission is to deliver an amazing experience, fast, easy, and to your door. We operate in over 70+ countries worldwide, powered by tech, designed by people. As one of Europe’s largest tech platforms, headquartered in Berlin, Germany. Delivery Hero has been listed on the Frankfurt Stock Exchange since 2017 and is part of the MDAX stock market index. We enable creative minds to deliver solutions that create impact within our ecosystem. We move fast, take action and adapt. No matter where you're from or what you believe in, we build, we deliver, we lead. We are Delivery Hero.
+
+Job Description
+
+We are on the lookout for a Senior Data Scientist to join the Consumer, Global Search tribe on our journey to always deliver amazing experiences.
+
+At Delivery Hero, you’ll shape the global consumer experience for millions of users. Your work will have a direct impact on how we attract and retain customers, creating data-driven, personalized interactions that keep them coming back. As part of our Consumer Team, you’ll enhance customer satisfaction and drive global growth and profitability through innovative projects. Watch this short video series to hear from the Consumer team and get a behind-the-scenes look at what it’s like working in this vertical at Delivery Hero.
+
+in our Global Search tribe, we provide cutting-edge Search services (Query understanding, Retrieval, Ranking) across all our platforms, impacting millions of customers worldwide. Our search functionality spans more than 60 countries and 35 languages, facilitating over 80 million searches daily across four continents.
+
+If you are passionate about leveraging machine learning and artificial intelligence to enhance user experience and drive innovation, we want you on our team in the heart of Berlin!
+
+In this role you will:
+
+Develop and Optimize Search Algorithms: You'll research, develop, and optimize advanced machine learning algorithms to improve our search experience. This includes enhancing query understanding, semantic search, spell correction, ranking, LLM based ontologies, and evaluating search results at scale, all with the goal of providing our users with the most relevant and tailored search experiences. 
+Collaborate Across Teams: Work as part of a global, cross-functional team, collaborating closely with product managers, analysts, backend engineers, and data engineers to drive end-to-end solutions. Your partnership will be crucial in translating business challenges into impactful data science projects that solve our customers' problems and meet our OKRs. 
+Extract Actionable Insights: Analyze and interpret large, complex datasets to uncover meaningful insights into search relevance challenges. You'll effectively communicate these findings to stakeholders, influencing strategy and product direction across different brands and platforms. 
+Experiment and Lead Innovation: Identify and apply the best machine learning and statistical methods to solve complex problems. You'll take full ownership of the data science lifecycle, from ideation to production, ensuring solutions are scalable and effective. You'll also identify and leverage emerging trends in Search and AI and contribute to the research roadmap of the team to accelerate innovation and integrate novel research findings into production systems. 
+Master Ambiguity: Take a leading role in tackling ambiguous business problems. You will translate these challenges into well-defined data science roadmaps with clear objectives, and confidently navigate uncertainty to deliver tangible results. 
+
+Qualifications
+
+Your heroic skills:
+
+Experience: Master’s degree (or Bachelor’s with 6+ years of work experience) in a quantitative field such as Computer Science, Mathematics, Physics, or similar. 4+ years of experience as a data scientist with at least 2+ years in the Search Domain (Query understanding, retrieval, ranking & personalization, or related fields)
+Technical Expertise: Proficiency in SQL and Python and its ML ecosystem is essential, as well as working with Cloud environments (ex. GCP or AWS). Good knowledge of best practices in software engineering with Python and experience deploying and running ML models in production. Deep understanding of MLOps principles and tools (e.g., MLFlow and Metaflow), and experience working with large-scale data-pipelines. 
+Search Machine Learning Knowledge: A strong understanding and hands-on experience of machine learning and AI solution in the context of search (e.g., learning-to-rank, semantic search, NER, LLMs, …) as well as a good good overview of ML and statistical methods, including Classical ML, Deep Learning. You should be able to discern the most suitable approach for different problems and be a quick, curious learner who can adapt to new domains. 
+Problem-Solving & Agility: You're comfortable with ambiguity and are adept at navigating it to define clear data science problems and solutions. Your strong analytical and problem-solving skills are focused on delivering practical and scalable solutions in a fast-paced environment. 
+Collaborative Spirit: Demonstrated experience working effectively in global, cross-functional teams. You have excellent communication skills, with the ability to articulate complex ideas, influence stakeholders at all levels, and have been leading shared projects and owning goals. You're open-minded and eager to learn from and mentor more junior scientists. 
+
+Additional Information
+
+Ensuring you and all our Heroes are looked after, happy, and healthy is always on the menu. Because if you’re in good shape, then we’re in good shape.
+
+Make the most of our hybrid working model and join the team for face-to-face connection and collaboration in our beautiful Berlin campus 2 days a week
+We offer 27 days holiday with an extra day on 2nd and 3rd year of service
+We will support you in developing yourself and your career growth opportunities: 1.000 € Educational Budget, Language Courses, Parental Support and access to the Udemy Business platform to explore a variety of online courses. 
+Get moving and release those wonderful, mind-boosting endorphins: Health Checkups, Meditation, Yoga, Gym & Bicycle Subsidy
+Cash. Dough. Cheddar. Whatever you call it, we’ll help you with it: Employee Share Purchase Plan, Sabbatical Bank, Public Transportation Ticket Discount, Life & Accident Insurance, Corporate Pension Plan
+The power of getting together over some food is unrivaled. Here are a few ways to help you do that. All the yum: Digital Meal Vouchers, Food Vouchers, Corporate Discounts. Courses. 
+
+We believe diversity and inclusion are key to creating not only an exciting product, but also an amazing customer and employee experience. Fostering this starts with hiring - therefore we do not discriminate on the basis of racial identities, religious beliefs, color, national origin, gender identities or expressions, sexual orientations, age, marital or disability statuses, or any other aspect that makes you, you. We encourage you to let us know if you need any accommodations or specific accessibility support to ensure a smooth interview experience—just include it in your application. You're welcome to share your pronouns (he/she/they) right from the start so we can address you respectfully from our first contact.

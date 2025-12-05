@@ -1,0 +1,21 @@
+# Resume Keyword Matcher Dependencies
+# PDF text extraction
+pdfplumber>=0.10.0
+
+# LinkedIn scraping (optional)
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+
+# NLP and keyword extraction
+spacy>=3.7.0
+scikit-learn>=1.3.0
+
+# CLI framework
+click>=8.1.0
+
+# Progress bars
+tqdm>=4.66.0
+
+# Utilities
+numpy>=1.24.0
+
