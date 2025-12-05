@@ -1,0 +1,65 @@
+About the job
+About Agoda
+
+At Agoda, we bridge the world through travel. Our story began in 2005, when two lifelong friends and entrepreneurs, driven by their passion for travel, launched Agoda to make it easier for everyone to explore the world.
+
+Today, we are part of Booking Holdings [NASDAQ: BKNG], with a diverse team of over 7,000 people from 90 countries, working together in offices around the globe. Every day, we connect people to destinations and experiences, with our great deals across our millions of hotels and holiday properties, flights, and experiences worldwide.
+
+No two days are the same at Agoda. Data and technology are at the heart of our culture, fueling our curiosity and innovation. If you’re ready to begin your best journey and help build travel for the world, join us.
+
+Get to Know Our Team
+
+The Data department , based in Bangkok , oversees all of Agoda’s data-related requirements. Our ultimate goal is to enable and increase the use of data in the company through creative approaches and the implementation of powerful resources such as operational and analytical databases, queue systems, BI tools, and data science technology. We hire the brightest minds from around the world to take on this challenge and equip them with the knowledge and tools that contribute to their personal growth and success while supporting our company’s culture of diversity and experimentation. The role the Data team plays at Agoda is critical as business users, product managers, engineers, and many others rely on us to empower their decision making. We are equally dedicated to our customers by improving their search experience with faster results and protecting them from any fraudulent activities. Data is interesting only when you have enough of it, and we have plenty. This is what drives up the challenge as part of the Data department, but also the reward.
+
+The Opportunity
+
+Please note -The role will be based in Bangkok. 
+
+We are looking for ambitious and agile data scientists that would like to seize the opportunity to work on some of the most challenging productive machine learning and big data platforms worldwide, processing some 600B events every day and making some 5B predictions.
+
+As part of the Data Science and Machine Learning (AI/ML) team you will be exposed to real-world challenges such as: dynamic pricing, predicting customer intents in real time, ranking search results to maximize lifetime value, classifying and deep learning content and personalization signals from unstructured data such as images and text, making personalized recommendations, innovating algorithm-supported promotions and products for supply partners, discovering insights from big data, and innovating the user experience. To tackle these challenges, you will have the opportunity to work on one of the world's largest ML infrastructure employing dozens of GPUs working in parallel, 30K+ CPU cores and 150TB of memory.
+
+In This Role, You’ll Get to
+
+Design, code, experiment and implement models and algorithms to maximize customer experience, supply side value, business outcomes, and infrastructure readiness.
+Mine a big data of hundreds of millions of customers and more than 600M daily user generated events, supplier and pricing data, and discover actionable insights to drive improvements and innovation.
+Work with developers and a variety of business owners to deliver daily results with the best quality.
+Research discover and harness new ideas that can make a difference
+
+What You’ll Need To Succeed
+
+4+ years hands-on data science experience.
+Excellent understanding of AI/ML/DL and Statistics, as well as coding proficiency using related open source libraries and frameworks.
+Significant proficiency in SQL and languages like Python, PySpark and/or Scala.
+Can lead, work independently as well as play a key role in a team.
+Good communication and interpersonal skills for working in a multicultural work environment.
+
+It’s Great if You Have
+
+PhD or MSc in Computer Science / Operations Research / Statistics or other quantitative fields
+Experience in NLP, image processing and/or recommendation systems
+Hands on experience in data engineering, working with big data framework like Spark/Hadoop
+Experience in data science for e-commerce and/or OTA
+
+We welcome both local and international applications for this role. Full visa sponsorship and relocation assistance available for eligible candidates.
+
+#sanfrancisco #sanjose #losangeles #sandiego #oakland #denver #miami #orlando #atlanta #chicago #boston #detroit #newyork #portland #philadelphia #dallas #houston #austin #seattle #sydney #melbourne #perth #toronto #vancouver #montreal #shanghai #beijing #shenzhen #prague #Brno #Ostrava #cairo #alexandria #giza #estonia #paris #berlin #munich #hamburg #stuttgart #cologne #frankfurt #hongkong #budapest #jakarta #bali #dublin #telaviv #milan #rome #venice #florence #naples #turin #palermo #bologna #tokyo #osaka #kualalumpur #malta #amsterdam #oslo #manila #warsaw #krakow #doha #alrayyan #riyadh #jeddah #mecca #medina #singapore #seoul #barcelona #madrid #stockholm #zurich #taipei #tainan #taichung #kaohsiung #bangkok #Phuket #istanbul #london #manchester #edinburgh #hcmc #hanoi #lodz #wroclaw #poznan #katowice #rio #salvador #newdelhi #bangalore #bandung #yokohama #nagoya #okinawa #fukuoka #jerusalem #mumbai #bengalulu #hyderabad #pune # #IT #4
+
+Discover More About Working At Agoda
+
+Agoda Careers https://careersatagoda.com
+Facebook https://www.facebook.com/agodacareers/
+LinkedIn https://www.linkedin.com/company/agoda
+YouTube https://www.youtube.com/agodalife
+
+Equal Opportunity Employer 
+
+At Agoda, we pride ourselves on being a company represented by people of all different backgrounds and orientations. We prioritize attracting diverse talent and cultivating an inclusive environment that encourages collaboration and innovation. Employment at Agoda is based solely on a person’s merit and qualifications. We are committed to providing equal employment opportunity regardless of sex, age, race, color, national origin, religion, marital status, pregnancy, sexual orientation, gender identity, disability, citizenship, veteran or military status, and other legally protected characteristics.
+
+We will keep your application on file so that we can consider you for future vacancies and you can always ask to have your details removed from the file. For more details please read our privacy policy.
+
+Disclaimer
+
+We do not accept any terms or conditions, nor do we recognize any agency’s representation of a candidate, from unsolicited third-party or agency submissions. If we receive unsolicited or speculative CVs, we reserve the right to contact and hire the candidate directly without any obligation to pay a recruitment fee.
+
+#frankfurt

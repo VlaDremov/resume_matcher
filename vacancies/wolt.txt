@@ -1,0 +1,48 @@
+About the job
+About Wolt
+
+At Wolt, we create technology that brings joy, simplicity and earnings to the neighborhoods of the world. In 2014 we started with delivery of restaurant food. Now we’re building the delivery of (almost) everything and you’ll find us in over 500 cities in 30 countries around the world. In 2022 we joined forces with DoorDash and together we keep on dreaming big and expanding across the globe.
+
+Working at Wolt isn’t always easy, but it’s definitely exciting. Here you’ll learn more, build more, and ship more than in most other companies. You’ll be challenged a lot, but also have a lot of fun on the way. So, if you’re a self-starter with drive and entrepreneurial spirit, this could be the ride of your life.
+
+We’re seeking a Machine Learning Engineer to join our cross-functional Logistics department within the Courier Group. The team works on developing critical areas for logistics, including order assignment and delivery estimates, aiming to improve customer experience by efficient order allocation and improving delivery estimates.
+
+In close collaboration with applied scientists, software engineers, product managers, designers, and analysts, the MLE will be helping the teams to develop and maintain ML solutions in production, solving problems like delivery time estimation, operational estimates used in task allocation, and order tracking delivery ETAs.
+
+Day-to-day in this role you’ll:
+
+Build the ML infrastructure to develop, train and deploy Wolt’s Logistics models from consumer facing estimates to operational estimates;
+Work end-to-end, from use case design to implementation, delivery and monitoring of your solutions;
+Maintain our production ML stack and raise the team’s ML engineering excellence bar;
+Liaise with Wolt’s ML Platform team to adopt different ML technologies and to create technical requirements for their solutions;
+Contribute to Wolt ML Engineering and Applied Science communities;
+Be part of a cross-disciplinary team with Applied Scientists, Software Engineers and Analysts to provide solutions to customer problems with a direct impact on the company’s business KPIs;
+Work at Wolt’s scale: Wolt operates in 32 different markets with millions of customers.
+
+Our humble expectations*
+
+You are experienced in end-to-end machine learning deployments and maintenance of ML systems and have at least 4+ years of experience in ML/MLOps;
+You have deployed and ran ML models in production at scale, maybe with hundreds of RPS and low latency;
+You bring solid experience in scaling solutions, monitoring ML stacks and troubleshooting ML deployments to the table. You can help with the technical issues the teams encounter;
+You are experienced in implementing real-time inference ML models in production;
+Good understanding of ML and MLOps principles as well as Software engineering experience in Python should complete your profile;
+Experienced in Docker, Kubernetes, workflow orchestration tools (e.g. Flyte), model and experiment registries (e.g. MLflow) and model serving systems (e.g. Seldon);
+You have solid communication and collaboration skills and are experienced in coordinating initiatives with your team and main stakeholders.
+
+What we offer
+
+You will own and drive technical solutions within the ML engineering space for the Logistics department, ensuring they are robust, scalable, and aligned with business goals. With a strong ability to work independently, you’ll take ownership from ideation through delivery.
+
+🌍 Where You’ll Work
+
+📍This role can be based in one of our tech hubs in Helsinki, Berlin or Stockholm or remotely in Finland, Germany or Sweden. We are not able to offer remote contracts from another country.
+
+Next steps*
+
+The position will be filled as soon as we find the right person, so make sure to apply as soon as you realize you really, really want to join us!
+
+The compensation will be a negotiable combination of monthly pay and DoorDash RSUs. The latter makes it exceptionally easy to be excited about our company growing and doing well, as you’ll own a piece of the pie.
+
+Our Commitment to Diversity and Inclusion
+
+We’re committed to growing and empowering a more inclusive community within our company, industry, and cities. That’s why we hire and cultivate diverse teams of people from all backgrounds, experiences, and perspectives. We believe that true innovation happens when everyone has room at the table and the tools, resources, and opportunity to excel.

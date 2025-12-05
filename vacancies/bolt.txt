@@ -1,0 +1,36 @@
+About the job
+Ready to shape the future of delivery services with data-driven decisions? At Bolt, we’re looking for a seasoned Data Scientist to join our Delivery Pricing team. This is your opportunity to solve real-world problems at scale—optimising customer prices and courier earnings across the markets. If you thrive at the intersection of machine learning, experimentation, and business impact, we’d love to hear from you.
+
+About Us
+
+With over 200 million customers in 50+ countries, Bolt is one of the fastest-growing tech companies in Europe and Africa. And it's all thanks to our people.
+
+We believe in creating an inclusive environment where everyone is welcome, regardless of race, colour, religion, gender identity, sexual orientation, age, or disability.
+
+Our ultimate goal is to make cities for people, not cars, and we need your help to achieve this mission!
+
+About The Role
+
+You will work on the pricing engine that optimises both customer prices and courier earnings to improve overall marketplace efficiency. This includes building automated exploration pipelines, estimating price elasticities, and solving optimisation problems. You'll apply predictive modelling and causal inference to measure the impact of pricing changes and guide strategy. Your work will directly influence marketplace balance, growth, and user experience.
+
+Main tasks and responsibilities:
+
+Collaborating with cross-functional teams, including Pricing Analysts, Product Managers, Data Engineers and Software Engineers, to gain a deep understanding of business needs and create end-to-end technical solutions for them.
+Deploying and validating solutions for millions of users, enabling fast feedback and measurable added value to customers.
+Rapidly deploying models to production environments using AWS and internal machine learning platforms, leveraging a toolkit that includes Python, Spark, Presto, SageMaker, and Airflow for efficient data processing and model deployment.
+Engaging in regular knowledge exchange with Data Scientists across all seniority levels, fostering a collaborative environment that promotes learning and innovation.
+Tackling diverse, real-world challenges across the pricing domain.
+Applying advanced data science and econometric techniques such as causal inference, optimization, predictive modeling, time series forecasting, multi-armed bandits, Bayesian experimental design and more.
+
+
+About you:
+
+You have at least 5 years of experience in Data Science and Machine Learning, including a minimum of 2 years focused specifically on pricing-related challenges.
+You have good expertise in econometric, experimentation design and causal inference.
+You have hands-on experience in building ML systems from end to end, including testing, monitoring, scaling, and measuring the impact.
+You’re skilled in Python programming, leveraging key libraries such as Pandas, NumPy, scikit-learn for data analysis and modelling, with practical experience in statistical hypothesis testing that allows you to independently identify problems, explore trends, and discover opportunities through data-driven methods.
+You have a proactive mindset, a willingness to take initiative and work with little supervision, and enthusiasm for collaborating with different roles in product, analytics, and engineering to uncover insights, test hypotheses, and inform strategic decisions.
+You exhibit excellent teamwork and strong communication skills in English, both verbal and written, enabling clear collaboration and knowledge-sharing.
+
+
+Experience is great, but what we really look for is drive, intelligence, and integrity. So even if you don’t tick every box, please consider applying!
