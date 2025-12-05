@@ -24,7 +24,7 @@ DEFAULT_VACANCIES_DIR = Path(__file__).parent / "vacancies"
 
 
 @click.group()
-@click.version_option(version="1.0.0", prog_name="Resume Keyword Matcher")
+@click.version_option(version="2.0.0", prog_name="Resume Keyword Matcher")
 def cli():
     """
     Resume Keyword Matcher - Optimize your resume for ATS systems.
@@ -428,6 +428,183 @@ def scrape(url: str, cookies: str, save_cookies: str):
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("job_file", type=click.Path(exists=True), required=False)
+@click.option(
+    "--text",
+    "-t",
+    type=str,
+    default=None,
+    help="Job description text (alternative to file)",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    default=None,
+    help="Output path for tailored resume",
+)
+@click.option(
+    "--preview/--no-preview",
+    default=False,
+    help="Preview changes without saving",
+)
+def tailor(job_file: str, text: str, output: str, preview: bool):
+    """
+    Generate a tailored resume using GPT-5 analysis.
+
+    Analyzes the job description and rewrites bullet points to
+    emphasize relevant keywords.
+
+    Example:
+        python main.py tailor vacancies/google.txt
+        python main.py tailor --text "Senior ML Engineer..."
+    """
+    import os
+    from pathlib import Path
+
+    # * Check API key
+    if not os.getenv("OPENAI_API_KEY"):
+        click.echo("Error: OPENAI_API_KEY not set.", err=True)
+        click.echo("Set it via: export OPENAI_API_KEY='sk-...'")
+        sys.exit(1)
+
+    # * Get job description
+    if job_file:
+        job_path = Path(job_file)
+        with open(job_path, "r", encoding="utf-8") as f:
+            job_text = f.read()
+        click.echo(f"Job description: {job_path.name}")
+    elif text:
+        job_text = text
+        click.echo("Job description: (provided via --text)")
+    else:
+        click.echo("Error: Provide either JOB_FILE or --text", err=True)
+        sys.exit(1)
+
+    click.echo()
+    click.echo("Analyzing with GPT-5...")
+
+    try:
+        from src.bullet_rewriter import BulletRewriter, extract_bullets_from_latex
+        from src.semantic_matcher import SemanticMatcher
+
+        # * Semantic matching
+        matcher = SemanticMatcher(DEFAULT_OUTPUT_DIR)
+        match_result = matcher.match(job_text)
+
+        best_variant = match_result["best_variant"]
+        similarity = match_result["similarity_score"]
+
+        click.echo(f"Best variant: {best_variant} (similarity: {similarity:.2%})")
+
+        # * Load variant and extract bullets
+        variant_path = DEFAULT_OUTPUT_DIR / f"resume_{best_variant}.tex"
+        with open(variant_path, "r") as f:
+            latex_content = f.read()
+
+        bullets = extract_bullets_from_latex(latex_content)
+        click.echo(f"Found {len(bullets)} bullet points")
+
+        # * Analyze and rewrite
+        click.echo()
+        click.echo("Rewriting bullets...")
+
+        rewriter = BulletRewriter()
+        result = rewriter.analyze_and_rewrite(
+            job_description=job_text,
+            resume_bullets=bullets[:10],
+            resume_variant=best_variant,
+        )
+
+        # * Display results
+        click.echo()
+        click.echo("═" * 50)
+        click.echo(f"  RELEVANCY SCORE: {result.relevancy_score}/100")
+        click.echo("═" * 50)
+
+        if result.key_matches:
+            click.echo()
+            click.echo("Matched Keywords:")
+            click.echo(f"  {', '.join(result.key_matches[:10])}")
+
+        if result.missing_keywords:
+            click.echo()
+            click.echo("Missing Keywords:")
+            click.echo(f"  {', '.join(result.missing_keywords[:10])}")
+
+        if preview and result.rewritten_bullets:
+            click.echo()
+            click.echo("Rewritten Bullets:")
+            click.echo("-" * 50)
+            for rb in result.rewritten_bullets[:5]:
+                click.echo(f"Original: {rb.original[:80]}...")
+                click.echo(f"Rewritten: {rb.rewritten[:80]}...")
+                click.echo()
+
+        if result.reasoning:
+            click.echo()
+            click.echo("Analysis:")
+            click.echo(f"  {result.reasoning}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--host",
+    "-h",
+    default="127.0.0.1",
+    help="Host to bind to",
+)
+@click.option(
+    "--port",
+    "-p",
+    default=8000,
+    help="Port to bind to",
+)
+@click.option(
+    "--reload/--no-reload",
+    default=True,
+    help="Enable auto-reload for development",
+)
+def serve(host: str, port: int, reload: bool):
+    """
+    Start the web interface server.
+
+    Launches the FastAPI backend that serves the React frontend.
+
+    Example:
+        python main.py serve
+        python main.py serve --port 8080
+    """
+    import os
+
+    # * Check API key
+    if not os.getenv("OPENAI_API_KEY"):
+        click.echo("Warning: OPENAI_API_KEY not set.", err=True)
+        click.echo("GPT-5 features will not work without it.")
+        click.echo()
+
+    click.echo(f"Starting Resume Matcher API on http://{host}:{port}")
+    click.echo("Press Ctrl+C to stop")
+    click.echo()
+
+    try:
+        import uvicorn
+        uvicorn.run(
+            "backend.api:app",
+            host=host,
+            port=port,
+            reload=reload,
+        )
+    except ImportError:
+        click.echo("Error: uvicorn not installed. Run: pip install uvicorn", err=True)
         sys.exit(1)
 
 

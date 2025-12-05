@@ -1,24 +1,26 @@
-# Resume Keyword Matcher
+# Resume Keyword Matcher v2.0
 
-A Python tool that generates keyword-optimized resume variants and matches them to job descriptions for improved ATS (Applicant Tracking System) compatibility.
+A Python tool that generates keyword-optimized resume variants and matches them to job descriptions using GPT-5 powered analysis and a modern web interface.
 
 ## Features
 
-- **Generate 5 Resume Variants**: Creates keyword-focused versions of your resume:
-  - MLOps & Platform Engineering
-  - NLP & LLM Engineering  
-  - Cloud & AWS Infrastructure
-  - Data Engineering & Pipelines
-  - Classical ML & Analytics
+### GPT-5 Powered Analysis
+- **Semantic Matching**: Uses OpenAI embeddings for understanding synonyms and context
+- **Intelligent Bullet Rewriting**: GPT-5 rewrites experience bullets to emphasize job-relevant keywords
+- **Structured Scoring**: Returns relevancy score (0-100) with detailed analysis
 
-- **Smart Job Matching**: Analyzes job descriptions and recommends the best resume variant based on:
-  - Category-based keyword matching
-  - TF-IDF similarity scoring
-  - Keyword overlap analysis
+### Web Interface (FastAPI + React)
+- Modern dark-themed UI
+- Paste job descriptions and get instant analysis
+- PDF resume preview
+- Save vacancies to database for future reference
 
-- **Keyword Analysis**: Extracts and clusters keywords from job descriptions to understand market demands
-
-- **LaTeX to PDF**: Compiles generated variants to PDF (requires pdflatex)
+### 5 Resume Variants
+- **MLOps & Platform Engineering** - CI/CD, Docker, Kubernetes, model deployment
+- **NLP & LLM Engineering** - LangChain, transformers, RAG, prompt engineering
+- **Cloud & AWS Infrastructure** - Sagemaker, EC2, S3, cloud-native solutions
+- **Data Engineering & Pipelines** - Spark, Airflow, Kafka, ETL
+- **Classical ML & Analytics** - XGBoost, scikit-learn, A/B testing
 
 ## Installation
 
@@ -26,70 +28,60 @@ A Python tool that generates keyword-optimized resume variants and matches them 
 # Clone or navigate to the project
 cd resume_matcher
 
-# Install dependencies
+# Install Python dependencies
 pip install -r requirements.txt
 
 # Download spaCy language model
 python -m spacy download en_core_web_sm
+
+# Set OpenAI API key
+export OPENAI_API_KEY="sk-your-key-here"
 ```
 
-### Optional: LaTeX Compilation
+### Frontend Setup (Optional)
+```bash
+cd frontend
+npm install
+```
 
-To compile resume variants to PDF, install a LaTeX distribution:
-
+### LaTeX Compilation (Optional)
+To compile resume variants to PDF:
 - **macOS**: `brew install --cask mactex-no-gui`
 - **Ubuntu**: `sudo apt-get install texlive-latex-base texlive-latex-extra`
-- **Windows**: Install [MiKTeX](https://miktex.org/)
 
 ## Usage
 
-### Generate Resume Variants
+### Web Interface
+```bash
+# Start the backend server
+python main.py serve
+
+# In another terminal, start the frontend (if using npm)
+cd frontend && npm run dev
+
+# Or just use the API at http://localhost:8000
+```
+
+### CLI Commands
 
 ```bash
-# Generate all 5 variants (LaTeX + PDF if pdflatex available)
+# Generate all 5 resume variants
 python main.py generate
 
-# Generate LaTeX only (skip PDF compilation)
-python main.py generate --no-compile-pdf
-
-# Use custom paths
-python main.py generate --resume path/to/resume.tex --output path/to/output/
-```
-
-### Match Job Description
-
-```bash
-# Match a job description file to the best resume
-python main.py match vacancies/asos.txt
-
-# With detailed explanation
+# Match a job to best resume (V1 - keyword-based)
 python main.py match vacancies/asos.txt --explain
 
-# Show all variants ranked
-python main.py match vacancies/asos.txt --all
+# Tailor resume with GPT-5 analysis (V2)
+python main.py tailor vacancies/google.txt
 
-# Match with direct text input
-python main.py match --text "Senior ML Engineer with MLOps experience..."
-```
+# Preview GPT-5 bullet rewrites
+python main.py tailor vacancies/google.txt --preview
 
-### Analyze Keywords
+# Analyze keywords from vacancies
+python main.py analyze --top 30
 
-```bash
-# Analyze keywords from all job descriptions
-python main.py analyze
-
-# Show more keywords
-python main.py analyze --top 50
-```
-
-### View Resume Info
-
-```bash
-# Display parsed resume information
-python main.py info
-
-# Include LinkedIn PDF
-python main.py info --pdf Profile.pdf
+# Start web server
+python main.py serve --port 8000
 ```
 
 ## Project Structure
@@ -99,71 +91,82 @@ resume_matcher/
 ├── resume.tex              # Your original resume
 ├── Profile.pdf             # LinkedIn export (optional)
 ├── vacancies/              # Job description files
-│   ├── asos.txt
-│   ├── strava.txt
-│   └── ...
-├── output/                 # Generated variants
-│   ├── resume_mlops.tex
-│   ├── resume_mlops.pdf
-│   ├── resume_nlp_llm.tex
-│   └── ...
+├── output/                 # Generated resume variants
 ├── src/
-│   ├── data_extraction.py  # PDF and LaTeX parsing
-│   ├── linkedin_scraper.py # LinkedIn scraping (optional)
-│   ├── keyword_engine.py   # Keyword extraction and clustering
-│   ├── resume_generator.py # Resume variant generation
-│   ├── latex_compiler.py   # LaTeX to PDF compilation
-│   └── matcher.py          # Job-to-resume matching
+│   ├── llm_client.py       # OpenAI GPT-5 wrapper
+│   ├── semantic_matcher.py # Embedding-based matching
+│   ├── bullet_rewriter.py  # GPT-5 bullet optimization
+│   ├── keyword_engine.py   # Keyword extraction
+│   ├── resume_generator.py # LaTeX variant generator
+│   ├── matcher.py          # Legacy keyword matching
+│   └── ...
+├── backend/
+│   ├── api.py              # FastAPI endpoints
+│   ├── schemas.py          # Pydantic models
+│   └── services.py         # Business logic
+├── frontend/
+│   ├── src/
+│   │   ├── App.tsx         # Main React component
+│   │   ├── api.ts          # API client
+│   │   └── components/     # UI components
+│   └── ...
 ├── main.py                 # CLI entry point
-├── requirements.txt
-└── README.md
+└── requirements.txt
 ```
 
-## How It Works
+## API Endpoints
 
-### 1. Keyword Extraction
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/analyze` | POST | Analyze job description with GPT-5 |
+| `/api/save-vacancy` | POST | Save job description to database |
+| `/api/vacancies` | GET | List saved vacancies |
+| `/api/variants` | GET | List resume variants |
+| `/api/resume/{variant}/pdf` | GET | Download PDF |
+| `/api/resume/{variant}/tex` | GET | Download LaTeX |
 
-The tool uses multiple techniques to identify relevant keywords:
-- **TF-IDF Analysis**: Statistical importance of terms
-- **spaCy NLP**: Named entity recognition and noun phrase extraction
-- **Technology Taxonomy**: Predefined list of ML/tech keywords
+## Cost Estimation (GPT-5)
 
-### 2. Resume Variant Generation
+Per analysis:
+- Embeddings: ~$0.0001 (negligible)
+- GPT-5 input (~2K tokens): ~$0.0025
+- GPT-5 output (~1K tokens): ~$0.01
+- **Total: ~$0.01-0.02 per analysis**
 
-Each variant emphasizes different skills by:
-- Reordering the Technical Skills section
-- Prioritizing theme-relevant technologies
-- Adding theme-specific summary enhancements
+## Target Positions
 
-### 3. Job Matching
-
-The matcher combines three scoring methods:
-- **Category Score (40%)**: How well the job matches predefined categories
-- **TF-IDF Similarity (35%)**: Textual similarity to resume content
-- **Keyword Overlap (25%)**: Direct keyword matching
+Optimized for:
+- ML Engineer
+- Applied Scientist  
+- Data Scientist
+- AI Engineer
 
 ## Configuration
 
-Edit the taxonomy in `src/keyword_engine.py` to customize keyword categories:
+Set the OpenAI API key:
+```bash
+export OPENAI_API_KEY="sk-your-key-here"
+```
 
-```python
-TECH_TAXONOMY = {
-    "mlops": ["docker", "kubernetes", "mlflow", ...],
-    "nlp_llm": ["langchain", "transformers", "rag", ...],
-    # Add your own categories
-}
+Or create a `.env` file:
+```
+OPENAI_API_KEY=sk-your-key-here
 ```
 
 ## Dependencies
 
-- `pdfplumber`: PDF text extraction
-- `spacy`: NLP and keyword extraction
-- `scikit-learn`: TF-IDF and similarity scoring
-- `click`: CLI framework
-- `tqdm`: Progress bars
-- `selenium` (optional): LinkedIn scraping
+### Python
+- `openai` - GPT-5 API
+- `fastapi`, `uvicorn` - Web backend
+- `pdfplumber` - PDF extraction
+- `spacy`, `scikit-learn` - NLP
+- `click`, `tqdm` - CLI
+
+### Frontend
+- React 18
+- TypeScript
+- Vite
 
 ## License
 
 MIT License
-
