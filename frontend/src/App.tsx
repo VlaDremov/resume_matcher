@@ -1,8 +1,7 @@
 import { useState } from 'react';
-import { analyzeJob, saveVacancy, getPdfUrl, AnalyzeResponse } from './api';
+import { analyzeJob, saveVacancy, AnalyzeResponse } from './api';
 import { JobInput } from './components/JobInput';
 import { ScoreDisplay } from './components/ScoreDisplay';
-import { PdfViewer } from './components/PdfViewer';
 import './App.css';
 
 function App() {
@@ -25,7 +24,7 @@ function App() {
     setResult(null);
 
     try {
-      const analysisResult = await analyzeJob(jobDescription, true, true);
+      const analysisResult = await analyzeJob(jobDescription, true);
       setResult(analysisResult);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed');
@@ -60,11 +59,11 @@ function App() {
           <h1>Resume Matcher</h1>
         </div>
         <div className="header-subtitle">
-          GPT-5 Powered Resume Optimization
+          Hybrid AI-Powered Resume Optimization
         </div>
       </header>
 
-      <main className="app-main">
+      <main className={`app-main ${result ? 'has-results' : ''}`}>
         <div className="input-section">
           <JobInput
             value={jobDescription}
@@ -86,59 +85,6 @@ function App() {
         {result && (
           <div className="results-section">
             <ScoreDisplay result={result} />
-
-            <div className="pdf-section">
-              <div className="section-header">
-                <h2>Best Match: {result.best_variant_display}</h2>
-                <div className="download-buttons">
-                  <a
-                    href={getPdfUrl(result.best_variant)}
-                    download
-                    className="btn btn-secondary"
-                  >
-                    ↓ Download PDF
-                  </a>
-                </div>
-              </div>
-
-              <PdfViewer
-                url={getPdfUrl(result.best_variant)}
-                variant={result.best_variant}
-              />
-            </div>
-
-            {result.key_matches.length > 0 && (
-              <div className="keywords-section">
-                <h3>Matched Keywords</h3>
-                <div className="keywords-list">
-                  {result.key_matches.map((keyword, idx) => (
-                    <span key={idx} className="keyword-tag matched">
-                      {keyword}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {result.missing_keywords.length > 0 && (
-              <div className="keywords-section">
-                <h3>Missing Keywords</h3>
-                <div className="keywords-list">
-                  {result.missing_keywords.map((keyword, idx) => (
-                    <span key={idx} className="keyword-tag missing">
-                      {keyword}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {result.reasoning && (
-              <div className="reasoning-section">
-                <h3>Analysis</h3>
-                <p>{result.reasoning}</p>
-              </div>
-            )}
           </div>
         )}
       </main>

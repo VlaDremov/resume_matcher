@@ -12,39 +12,24 @@ class AnalyzeRequest(BaseModel):
 
     job_description: str = Field(..., description="The job description text to analyze")
     use_semantic: bool = Field(default=True, description="Use semantic matching with embeddings")
-    rewrite_bullets: bool = Field(default=True, description="Rewrite bullets using GPT-5")
 
 
 class CategoryScore(BaseModel):
-    """Score for a single category."""
+    """Score for a single resume category/variant."""
 
     category: str
     score: float
     display_name: str
 
 
-class RewrittenBullet(BaseModel):
-    """A rewritten bullet point."""
-
-    original: str
-    rewritten: str
-    keywords_added: list[str]
-    confidence: float
-
-
 class AnalyzeResponse(BaseModel):
     """Response from the analyze endpoint."""
 
-    relevancy_score: int = Field(..., ge=0, le=100, description="Overall relevancy score 0-100")
     best_variant: str = Field(..., description="Name of the best matching variant")
     best_variant_display: str = Field(..., description="Display name of the best variant")
     category_scores: list[CategoryScore] = Field(..., description="Scores by category")
-    key_matches: list[str] = Field(..., description="Keywords matched from job")
+    key_matches: list[str] = Field(default=[], description="Keywords matched from job")
     missing_keywords: list[str] = Field(default=[], description="Important missing keywords")
-    rewritten_bullets: list[RewrittenBullet] = Field(default=[], description="Rewritten bullets")
-    reasoning: str = Field(default="", description="Analysis reasoning")
-    tex_path: Optional[str] = Field(None, description="Path to LaTeX file")
-    pdf_path: Optional[str] = Field(None, description="Path to PDF file")
 
 
 class SaveVacancyRequest(BaseModel):
@@ -105,4 +90,3 @@ class ErrorResponse(BaseModel):
 
     error: str
     detail: Optional[str] = None
-

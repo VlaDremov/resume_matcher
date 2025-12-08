@@ -26,7 +26,7 @@
 
 .job-input textarea {
   width: 100%;
-  min-height: 280px;
+  min-height: 400px;
   padding: var(--spacing-md);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);

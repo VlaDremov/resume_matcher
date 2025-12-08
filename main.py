@@ -15,7 +15,11 @@ import sys
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 from tqdm import tqdm
+
+# * Load environment variables from .env file
+load_dotenv()
 
 # * Configuration - adjust these paths as needed
 DEFAULT_RESUME_PATH = Path(__file__).parent / "resume.tex"

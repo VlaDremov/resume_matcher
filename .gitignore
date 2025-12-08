@@ -6,3 +6,6 @@ __pycache__/*
 */__init__.py*
 */__pycache__/*
 *.pyc
+
+
+src/__pycache__/*

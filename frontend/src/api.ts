@@ -10,24 +10,12 @@ export interface CategoryScore {
   display_name: string;
 }
 
-export interface RewrittenBullet {
-  original: string;
-  rewritten: string;
-  keywords_added: string[];
-  confidence: number;
-}
-
 export interface AnalyzeResponse {
-  relevancy_score: number;
   best_variant: string;
   best_variant_display: string;
   category_scores: CategoryScore[];
   key_matches: string[];
   missing_keywords: string[];
-  rewritten_bullets: RewrittenBullet[];
-  reasoning: string;
-  tex_path: string | null;
-  pdf_path: string | null;
 }
 
 export interface VacancyInfo {
@@ -56,11 +44,14 @@ export interface ResumeVariantInfo {
 
 /**
  * Analyze a job description and find the best resume match.
+ *
+ * Uses hybrid matching:
+ * - Local + OpenAI embeddings for semantic similarity
+ * - TF-IDF + GPT for keyword extraction
  */
 export async function analyzeJob(
   jobDescription: string,
-  useSemantic: boolean = true,
-  rewriteBullets: boolean = true
+  useSemantic: boolean = true
 ): Promise<AnalyzeResponse> {
   const response = await fetch(`${API_BASE}/analyze`, {
     method: 'POST',
@@ -70,7 +61,6 @@ export async function analyzeJob(
     body: JSON.stringify({
       job_description: jobDescription,
       use_semantic: useSemantic,
-      rewrite_bullets: rewriteBullets,
     }),
   });
 
@@ -139,18 +129,3 @@ export async function listVariants(): Promise<ResumeVariantInfo[]> {
   const data = await response.json();
   return data.variants;
 }
-
-/**
- * Get PDF URL for a variant.
- */
-export function getPdfUrl(variantName: string): string {
-  return `${API_BASE}/resume/${variantName}/pdf`;
-}
-
-/**
- * Get LaTeX URL for a variant.
- */
-export function getTexUrl(variantName: string): string {
-  return `${API_BASE}/resume/${variantName}/tex`;
-}
-

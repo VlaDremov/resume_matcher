@@ -1,21 +1,24 @@
 """
-OpenAI GPT-5 Client Module.
+OpenAI API Client Module.
 
 Provides a wrapper for OpenAI API with support for:
-- GPT-5 chat completions with structured output
+- Chat completions with structured JSON output
 - Text embeddings for semantic matching
-- Rate limiting and error handling
+- Automatic retries with exponential backoff
+- Async methods for parallel execution
 """
 
+import asyncio
+import logging
 import os
 import time
-from typing import Optional, Type, TypeVar
+from typing import Optional, Type, TypeVar, Union
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
 # * Configuration
-DEFAULT_MODEL = "gpt-5"
+DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
@@ -23,15 +26,18 @@ RETRY_DELAY = 1.0
 
 T = TypeVar("T", bound=BaseModel)
 
+logger = logging.getLogger("resume_matcher.llm")
+
 
 class LLMClient:
     """
-    OpenAI GPT-5 client with structured output support.
+    OpenAI API client with structured output and embedding support.
 
     Supports:
-    - Chat completions with JSON structured output
-    - Text embeddings for semantic similarity
+    - Chat completions with JSON structured output (gpt-4o-mini)
+    - Text embeddings for semantic similarity (text-embedding-3-small)
     - Automatic retries with exponential backoff
+    - Async methods for parallel execution
     """
 
     def __init__(
@@ -45,7 +51,7 @@ class LLMClient:
 
         Args:
             api_key: OpenAI API key. If None, reads from OPENAI_API_KEY env var.
-            model: Model to use for chat completions (default: gpt-5).
+            model: Model to use for chat completions (default: gpt-4o-mini).
             embedding_model: Model to use for embeddings.
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -56,66 +62,21 @@ class LLMClient:
                 "or pass api_key to the constructor."
             )
 
+        # * Sync and async clients
         self.client = OpenAI(api_key=self.api_key)
+        self.async_client = AsyncOpenAI(api_key=self.api_key)
         self.model = model
         self.embedding_model = embedding_model
-
-    def chat(
-        self,
-        prompt: str,
-        system_prompt: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 2000,
-    ) -> str:
-        """
-        Send a chat completion request.
-
-        Args:
-            prompt: User prompt.
-            system_prompt: Optional system prompt.
-            temperature: Sampling temperature (0-2).
-            max_tokens: Maximum tokens in response.
-
-        Returns:
-            Model response text.
-        """
-        messages = []
-
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-
-        messages.append({"role": "user", "content": prompt})
-
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-
-                return response.choices[0].message.content or ""
-
-            except Exception as e:
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_DELAY * (2 ** attempt)
-                    print(f"? Retry {attempt + 1}/{MAX_RETRIES} after {delay}s: {e}")
-                    time.sleep(delay)
-                else:
-                    raise RuntimeError(f"Failed after {MAX_RETRIES} attempts: {e}") from e
-
-        return ""
 
     def chat_structured(
         self,
         prompt: str,
         response_model: Type[T],
         system_prompt: Optional[str] = None,
-        temperature: float = 0.3,
+        temperature: Optional[float] = None,
     ) -> T:
         """
-        Send a chat completion request with structured JSON output.
+        Send a chat completion request with structured JSON output (sync).
 
         Args:
             prompt: User prompt.
@@ -126,9 +87,90 @@ class LLMClient:
         Returns:
             Parsed response as Pydantic model instance.
         """
-        messages = []
+        messages = self._build_messages(prompt, response_model, system_prompt)
 
-        # * Build system prompt with JSON schema
+        for attempt in range(MAX_RETRIES):
+            try:
+                start = time.perf_counter()
+                request_kwargs = self._build_chat_kwargs(messages, temperature)
+
+                response = self.client.chat.completions.create(**request_kwargs)
+                duration = time.perf_counter() - start
+
+                return self._parse_chat_response(response, response_model, duration)
+
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_DELAY * (2 ** attempt)
+                    logger.warning(
+                        "LLM structured retry %s/%s in %.1fs due to: %s",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        delay,
+                        e,
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error("LLM structured call failed after retries: %s", e, exc_info=True)
+                    raise RuntimeError(f"Failed after {MAX_RETRIES} attempts: {e}") from e
+
+        raise RuntimeError("Unexpected error in chat_structured")
+
+    async def chat_structured_async(
+        self,
+        prompt: str,
+        response_model: Type[T],
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> T:
+        """
+        Send a chat completion request with structured JSON output (async).
+
+        Args:
+            prompt: User prompt.
+            response_model: Pydantic model class for the response.
+            system_prompt: Optional system prompt.
+            temperature: Sampling temperature (lower for more deterministic).
+
+        Returns:
+            Parsed response as Pydantic model instance.
+        """
+        messages = self._build_messages(prompt, response_model, system_prompt)
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                start = time.perf_counter()
+                request_kwargs = self._build_chat_kwargs(messages, temperature)
+
+                response = await self.async_client.chat.completions.create(**request_kwargs)
+                duration = time.perf_counter() - start
+
+                return self._parse_chat_response(response, response_model, duration)
+
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_DELAY * (2 ** attempt)
+                    logger.warning(
+                        "LLM structured async retry %s/%s in %.1fs due to: %s",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        delay,
+                        e,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("LLM structured async failed after retries: %s", e, exc_info=True)
+                    raise RuntimeError(f"Failed after {MAX_RETRIES} attempts: {e}") from e
+
+        raise RuntimeError("Unexpected error in chat_structured_async")
+
+    def _build_messages(
+        self,
+        prompt: str,
+        response_model: Type[T],
+        system_prompt: Optional[str],
+    ) -> list[dict]:
+        """Build messages list for chat completion."""
         schema_json = response_model.model_json_schema()
         json_instruction = (
             f"You must respond with valid JSON matching this schema:\n"
@@ -140,38 +182,93 @@ class LLMClient:
         if system_prompt:
             full_system_prompt = f"{system_prompt}\n\n{json_instruction}"
 
-        messages.append({"role": "system", "content": full_system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        return [
+            {"role": "system", "content": full_system_prompt},
+            {"role": "user", "content": prompt},
+        ]
 
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=4000,
-                    response_format={"type": "json_object"},
+    def _build_chat_kwargs(
+        self,
+        messages: list[dict],
+        temperature: Optional[float],
+    ) -> dict:
+        """Build kwargs for chat completion request."""
+        request_kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "max_completion_tokens": 4000,
+            "response_format": {"type": "json_object"},
+        }
+
+        if temperature is not None:
+            request_kwargs["temperature"] = temperature
+
+        return request_kwargs
+
+    def _parse_chat_response(
+        self,
+        response,
+        response_model: Type[T],
+        duration: float,
+    ) -> T:
+        """Parse chat completion response into Pydantic model."""
+        usage = getattr(response, "usage", None)
+        token_summary = ""
+        if usage:
+            prompt_tokens = getattr(usage, "prompt_tokens", None)
+            completion_tokens = getattr(usage, "completion_tokens", None)
+            total_tokens = getattr(usage, "total_tokens", None)
+            token_summary = (
+                f" prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}"
+            )
+
+        message = response.choices[0].message
+        raw_content: Union[str, dict, BaseModel, None] = getattr(message, "content", None)
+        parsed = getattr(message, "parsed", None)
+
+        if parsed is not None:
+            if isinstance(parsed, BaseModel):
+                logger.info(
+                    "LLM structured success model=%s duration=%.3fs%s",
+                    self.model,
+                    duration,
+                    token_summary,
                 )
+                return response_model.model_validate(parsed.model_dump())
+            if isinstance(parsed, dict):
+                logger.info(
+                    "LLM structured success model=%s duration=%.3fs%s",
+                    self.model,
+                    duration,
+                    token_summary,
+                )
+                return response_model.model_validate(parsed)
+            if isinstance(parsed, str):
+                raw_content = parsed
 
-                content = response.choices[0].message.content or "{}"
+        if raw_content is None or (isinstance(raw_content, str) and not raw_content.strip()):
+            raise ValueError("Received empty content from LLM")
 
-                # * Parse and validate with Pydantic
-                return response_model.model_validate_json(content)
+        if isinstance(raw_content, dict):
+            logger.info(
+                "LLM structured success model=%s duration=%.3fs%s",
+                self.model,
+                duration,
+                token_summary,
+            )
+            return response_model.model_validate(raw_content)
 
-            except Exception as e:
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_DELAY * (2 ** attempt)
-                    print(f"? Retry {attempt + 1}/{MAX_RETRIES} after {delay}s: {e}")
-                    time.sleep(delay)
-                else:
-                    raise RuntimeError(f"Failed after {MAX_RETRIES} attempts: {e}") from e
-
-        # * Should not reach here, but satisfy type checker
-        raise RuntimeError("Unexpected error in chat_structured")
+        logger.info(
+            "LLM structured success model=%s duration=%.3fs%s",
+            self.model,
+            duration,
+            token_summary,
+        )
+        return response_model.model_validate_json(str(raw_content))
 
     def get_embedding(self, text: str) -> list[float]:
         """
-        Get embedding vector for text.
+        Get embedding vector for text using OpenAI embeddings (sync).
 
         Args:
             text: Text to embed.
@@ -186,9 +283,17 @@ class LLMClient:
 
         for attempt in range(MAX_RETRIES):
             try:
+                start = time.perf_counter()
                 response = self.client.embeddings.create(
                     model=self.embedding_model,
                     input=text,
+                )
+                duration = time.perf_counter() - start
+
+                logger.info(
+                    "Embedding success model=%s duration=%.3fs",
+                    self.embedding_model,
+                    duration,
                 )
 
                 return response.data[0].embedding
@@ -196,49 +301,65 @@ class LLMClient:
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_DELAY * (2 ** attempt)
-                    print(f"? Retry {attempt + 1}/{MAX_RETRIES} after {delay}s: {e}")
+                    logger.warning(
+                        "Embedding retry %s/%s in %.1fs due to: %s",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        delay,
+                        e,
+                    )
                     time.sleep(delay)
                 else:
+                    logger.error("Embedding failed after retries: %s", e, exc_info=True)
                     raise RuntimeError(f"Failed after {MAX_RETRIES} attempts: {e}") from e
 
         return []
 
-    def get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
+    async def get_embedding_async(self, text: str) -> list[float]:
         """
-        Get embedding vectors for multiple texts.
+        Get embedding vector for text using OpenAI embeddings (async).
 
         Args:
-            texts: List of texts to embed.
+            text: Text to embed.
 
         Returns:
-            List of embedding vectors.
+            Embedding vector as list of floats.
         """
-        # * Truncate and filter empty texts
+        # * Truncate very long texts
         max_chars = 8000
-        processed_texts = []
-        for text in texts:
-            if text.strip():
-                processed_texts.append(text[:max_chars] if len(text) > max_chars else text)
-
-        if not processed_texts:
-            return []
+        if len(text) > max_chars:
+            text = text[:max_chars]
 
         for attempt in range(MAX_RETRIES):
             try:
-                response = self.client.embeddings.create(
+                start = time.perf_counter()
+                response = await self.async_client.embeddings.create(
                     model=self.embedding_model,
-                    input=processed_texts,
+                    input=text,
+                )
+                duration = time.perf_counter() - start
+
+                logger.info(
+                    "Embedding async success model=%s duration=%.3fs",
+                    self.embedding_model,
+                    duration,
                 )
 
-                # * Return embeddings in same order as input
-                return [item.embedding for item in response.data]
+                return response.data[0].embedding
 
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_DELAY * (2 ** attempt)
-                    print(f"? Retry {attempt + 1}/{MAX_RETRIES} after {delay}s: {e}")
-                    time.sleep(delay)
+                    logger.warning(
+                        "Embedding async retry %s/%s in %.1fs due to: %s",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        delay,
+                        e,
+                    )
+                    await asyncio.sleep(delay)
                 else:
+                    logger.error("Embedding async failed after retries: %s", e, exc_info=True)
                     raise RuntimeError(f"Failed after {MAX_RETRIES} attempts: {e}") from e
 
         return []
@@ -255,4 +376,3 @@ def get_client(api_key: Optional[str] = None) -> LLMClient:
         Configured LLMClient instance.
     """
     return LLMClient(api_key=api_key)
-

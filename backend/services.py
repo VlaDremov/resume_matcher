@@ -1,8 +1,13 @@
 """
 Business Logic Services for the Resume Matcher API.
+
+Supports async operations for parallel execution of LLM calls.
 """
 
+import asyncio
+import logging
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -10,10 +15,12 @@ from backend.schemas import (
     AnalyzeResponse,
     CategoryScore,
     ResumeVariantInfo,
-    RewrittenBullet,
     SaveVacancyResponse,
     VacancyInfo,
 )
+
+# * Module logger
+logger = logging.getLogger("resume_matcher.services")
 
 # * Project paths
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -45,66 +52,86 @@ class ResumeAnalysisService:
 
     def __init__(self):
         """Initialize the analysis service."""
-        self._llm_client = None
         self._semantic_matcher = None
-        self._bullet_rewriter = None
-
-    @property
-    def llm_client(self):
-        """Lazy-load LLM client."""
-        if self._llm_client is None:
-            from src.llm_client import get_client
-            self._llm_client = get_client()
-        return self._llm_client
+        self._keyword_extractor = None
 
     @property
     def semantic_matcher(self):
-        """Lazy-load semantic matcher."""
+        """Lazy-load semantic matcher with hybrid embeddings."""
         if self._semantic_matcher is None:
             from src.semantic_matcher import SemanticMatcher
-            self._semantic_matcher = SemanticMatcher(OUTPUT_DIR, client=self.llm_client)
+            self._semantic_matcher = SemanticMatcher(OUTPUT_DIR)
         return self._semantic_matcher
 
     @property
-    def bullet_rewriter(self):
-        """Lazy-load bullet rewriter."""
-        if self._bullet_rewriter is None:
-            from src.bullet_rewriter import BulletRewriter
-            self._bullet_rewriter = BulletRewriter(client=self.llm_client)
-        return self._bullet_rewriter
+    def keyword_extractor(self):
+        """Lazy-load hybrid keyword extractor."""
+        if self._keyword_extractor is None:
+            from src.hybrid_keywords import HybridKeywordExtractor
+            self._keyword_extractor = HybridKeywordExtractor()
+        return self._keyword_extractor
 
     def analyze(
         self,
         job_description: str,
         use_semantic: bool = True,
-        rewrite_bullets: bool = True,
+        rewrite_bullets: bool = False,  # ! Deprecated, ignored
     ) -> AnalyzeResponse:
         """
         Analyze a job description and find the best resume match.
 
+        Uses hybrid approach:
+        - Semantic matching: Local + OpenAI embeddings (weighted)
+        - Keyword extraction: TF-IDF + GPT (merged)
+
         Args:
             job_description: Job description text.
             use_semantic: Whether to use semantic matching.
-            rewrite_bullets: Whether to rewrite bullets with GPT-5.
+            rewrite_bullets: Ignored (deprecated).
 
         Returns:
             AnalyzeResponse with analysis results.
         """
-        # * Get semantic match scores
+        start = time.perf_counter()
+        logger.info(
+            "Analyze start use_semantic=%s job_chars=%s",
+            use_semantic,
+            len(job_description),
+        )
+
+        # * Get hybrid semantic match scores
+        best_variant = "classical_ml"
+        similarity_scores = {}
+
         if use_semantic:
             try:
+                semantic_start = time.perf_counter()
                 semantic_result = self.semantic_matcher.match(job_description)
-                best_variant = semantic_result["best_variant"]
+                best_variant = semantic_result["best_variant"] or "classical_ml"
                 similarity_scores = semantic_result["all_scores"]
+                semantic_duration = time.perf_counter() - semantic_start
+                logger.info(
+                    "Hybrid semantic match complete variant=%s duration=%.3fs categories=%s",
+                    best_variant,
+                    semantic_duration,
+                    len(similarity_scores),
+                )
             except Exception as e:
-                print(f"! Semantic matching failed: {e}")
-                best_variant = "classical_ml"
-                similarity_scores = {}
+                logger.error("Semantic matching failed: %s", e, exc_info=True)
+                # * Fall back to keyword-based matching
+                from src.keyword_engine import find_best_theme_for_job, match_job_to_categories
+                best_variant, _ = find_best_theme_for_job(job_description)
+                similarity_scores = match_job_to_categories(job_description)
         else:
-            # * Fall back to keyword-based matching
+            # * Use keyword-based matching only
             from src.keyword_engine import find_best_theme_for_job, match_job_to_categories
             best_variant, _ = find_best_theme_for_job(job_description)
             similarity_scores = match_job_to_categories(job_description)
+            logger.info(
+                "Keyword-based matching selected variant=%s categories=%s",
+                best_variant,
+                len(similarity_scores),
+            )
 
         # * Build category scores
         category_scores = []
@@ -118,70 +145,158 @@ class ResumeAnalysisService:
         # * Sort by score descending
         category_scores.sort(key=lambda x: -x.score)
 
-        # * Analyze and rewrite bullets if requested
-        rewritten_bullets = []
+        # * Extract keywords using hybrid approach
         key_matches = []
         missing_keywords = []
-        reasoning = ""
-        relevancy_score = 50  # * Default score
 
-        if rewrite_bullets:
-            try:
-                # * Extract bullets from best variant
-                variant_path = OUTPUT_DIR / f"resume_{best_variant}.tex"
-                if variant_path.exists():
-                    from src.bullet_rewriter import extract_bullets_from_latex
+        try:
+            keywords_start = time.perf_counter()
+            # * Get resume text for the best variant
+            resume_text = self.semantic_matcher.get_variant_text(best_variant) or ""
 
-                    with open(variant_path, "r") as f:
-                        latex_content = f.read()
+            key_matches, missing_keywords = self.keyword_extractor.extract_keywords_hybrid(
+                job_text=job_description,
+                resume_text=resume_text,
+            )
+            keywords_duration = time.perf_counter() - keywords_start
+            logger.info(
+                "Hybrid keyword extraction complete matches=%s missing=%s duration=%.3fs",
+                len(key_matches),
+                len(missing_keywords),
+                keywords_duration,
+            )
+        except Exception as e:
+            logger.error("Keyword extraction failed: %s", e, exc_info=True)
 
-                    bullets = extract_bullets_from_latex(latex_content)
-
-                    # * Analyze with GPT-5
-                    analysis = self.bullet_rewriter.analyze_and_rewrite(
-                        job_description=job_description,
-                        resume_bullets=bullets[:10],  # * Limit to first 10 bullets
-                        resume_variant=best_variant,
-                    )
-
-                    relevancy_score = analysis.relevancy_score
-                    key_matches = analysis.key_matches
-                    missing_keywords = analysis.missing_keywords
-                    reasoning = analysis.reasoning
-
-                    # * Convert rewritten bullets
-                    for rb in analysis.rewritten_bullets:
-                        rewritten_bullets.append(RewrittenBullet(
-                            original=rb.original,
-                            rewritten=rb.rewritten,
-                            keywords_added=rb.keywords_added,
-                            confidence=rb.confidence,
-                        ))
-
-            except Exception as e:
-                print(f"! Bullet rewriting failed: {e}")
-                reasoning = f"Bullet rewriting failed: {e}"
-
-        # * Calculate relevancy score from semantic similarity if not from GPT
-        if not rewrite_bullets and similarity_scores:
-            max_score = max(similarity_scores.values()) if similarity_scores else 0
-            relevancy_score = int(max_score * 100)
-
-        # * Get file paths
-        tex_path = OUTPUT_DIR / f"resume_{best_variant}.tex"
-        pdf_path = OUTPUT_DIR / f"resume_{best_variant}.pdf"
+        total_duration = time.perf_counter() - start
+        logger.info(
+            "Analyze complete variant=%s duration=%.3fs",
+            best_variant,
+            total_duration,
+        )
 
         return AnalyzeResponse(
-            relevancy_score=relevancy_score,
             best_variant=best_variant,
             best_variant_display=VARIANT_DISPLAY_NAMES.get(best_variant, best_variant.title()),
             category_scores=category_scores,
             key_matches=key_matches,
             missing_keywords=missing_keywords,
-            rewritten_bullets=rewritten_bullets,
-            reasoning=reasoning,
-            tex_path=str(tex_path) if tex_path.exists() else None,
-            pdf_path=str(pdf_path) if pdf_path.exists() else None,
+        )
+
+    async def analyze_async(
+        self,
+        job_description: str,
+        use_semantic: bool = True,
+    ) -> AnalyzeResponse:
+        """
+        Analyze a job description and find the best resume match (async).
+
+        Runs semantic matching and keyword extraction in parallel for faster execution.
+
+        Args:
+            job_description: Job description text.
+            use_semantic: Whether to use semantic matching.
+
+        Returns:
+            AnalyzeResponse with analysis results.
+        """
+        start = time.perf_counter()
+        logger.info(
+            "Analyze async start use_semantic=%s job_chars=%s",
+            use_semantic,
+            len(job_description),
+        )
+
+        # * Get hybrid semantic match scores
+        best_variant = "classical_ml"
+        similarity_scores = {}
+
+        if use_semantic:
+            try:
+                semantic_start = time.perf_counter()
+                semantic_result = await self.semantic_matcher.match_async(job_description)
+                best_variant = semantic_result["best_variant"] or "classical_ml"
+                similarity_scores = semantic_result["all_scores"]
+                semantic_duration = time.perf_counter() - semantic_start
+                logger.info(
+                    "Hybrid semantic match async complete variant=%s duration=%.3fs categories=%s",
+                    best_variant,
+                    semantic_duration,
+                    len(similarity_scores),
+                )
+            except Exception as e:
+                logger.error("Semantic matching async failed: %s", e, exc_info=True)
+                # * Fall back to keyword-based matching (run in thread)
+                from src.keyword_engine import find_best_theme_for_job, match_job_to_categories
+                best_variant, _ = await asyncio.to_thread(
+                    find_best_theme_for_job, job_description
+                )
+                similarity_scores = await asyncio.to_thread(
+                    match_job_to_categories, job_description
+                )
+        else:
+            # * Use keyword-based matching only (run in thread)
+            from src.keyword_engine import find_best_theme_for_job, match_job_to_categories
+            best_variant, _ = await asyncio.to_thread(
+                find_best_theme_for_job, job_description
+            )
+            similarity_scores = await asyncio.to_thread(
+                match_job_to_categories, job_description
+            )
+            logger.info(
+                "Keyword-based matching selected variant=%s categories=%s",
+                best_variant,
+                len(similarity_scores),
+            )
+
+        # * Build category scores
+        category_scores = []
+        for variant, score in similarity_scores.items():
+            category_scores.append(CategoryScore(
+                category=variant,
+                score=round(score, 3),
+                display_name=VARIANT_DISPLAY_NAMES.get(variant, variant.title()),
+            ))
+
+        # * Sort by score descending
+        category_scores.sort(key=lambda x: -x.score)
+
+        # * Extract keywords using hybrid approach (async)
+        key_matches = []
+        missing_keywords = []
+
+        try:
+            keywords_start = time.perf_counter()
+            # * Get resume text for the best variant
+            resume_text = self.semantic_matcher.get_variant_text(best_variant) or ""
+
+            key_matches, missing_keywords = await self.keyword_extractor.extract_keywords_hybrid_async(
+                job_text=job_description,
+                resume_text=resume_text,
+            )
+            keywords_duration = time.perf_counter() - keywords_start
+            logger.info(
+                "Hybrid keyword extraction async complete matches=%s missing=%s duration=%.3fs",
+                len(key_matches),
+                len(missing_keywords),
+                keywords_duration,
+            )
+        except Exception as e:
+            logger.error("Keyword extraction async failed: %s", e, exc_info=True)
+
+        total_duration = time.perf_counter() - start
+        logger.info(
+            "Analyze async complete variant=%s duration=%.3fs",
+            best_variant,
+            total_duration,
+        )
+
+        return AnalyzeResponse(
+            best_variant=best_variant,
+            best_variant_display=VARIANT_DISPLAY_NAMES.get(best_variant, best_variant.title()),
+            category_scores=category_scores,
+            key_matches=key_matches,
+            missing_keywords=missing_keywords,
         )
 
 
@@ -228,12 +343,19 @@ class VacancyService:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
 
+            logger.info(
+                "Vacancy saved filename=%s path=%s length=%s",
+                safe_filename,
+                filepath,
+                len(content),
+            )
             return SaveVacancyResponse(
                 success=True,
                 filepath=str(filepath),
                 message=f"Vacancy saved to {filepath.name}",
             )
         except Exception as e:
+            logger.error("Failed to save vacancy filename=%s error=%s", safe_filename, e, exc_info=True)
             return SaveVacancyResponse(
                 success=False,
                 filepath="",
@@ -288,8 +410,9 @@ class VacancyService:
                 ))
 
             except Exception as e:
-                print(f"? Could not read {filepath}: {e}")
+                logger.warning("Could not read vacancy file=%s error=%s", filepath, e, exc_info=True)
 
+        logger.info("Vacancies listed count=%s", len(vacancies))
         return vacancies
 
 
@@ -319,6 +442,7 @@ class ResumeVariantService:
                 pdf_path=str(pdf_path) if pdf_path.exists() else None,
             ))
 
+        logger.info("Variants listed count=%s", len(variants))
         return variants
 
     def get_variant_file(self, variant_name: str, file_type: str = "pdf") -> Optional[Path]:
@@ -344,4 +468,3 @@ class ResumeVariantService:
 analysis_service = ResumeAnalysisService()
 vacancy_service = VacancyService()
 variant_service = ResumeVariantService()
-
