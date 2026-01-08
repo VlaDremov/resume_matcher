@@ -13,9 +13,13 @@ from typing import Optional
 
 from backend.schemas import (
     AnalyzeResponse,
+    CategorizedKeywords,
     CategoryScore,
+    KeywordWithMetadata,
+    MarketTrendsInfo,
     ResumeVariantInfo,
     SaveVacancyResponse,
+    TrendingSkillInfo,
     VacancyInfo,
 )
 
@@ -47,6 +51,29 @@ VARIANT_DESCRIPTIONS = {
 }
 
 
+def _convert_to_schema_keywords(internal_result) -> CategorizedKeywords:
+    """Convert internal CategorizedKeywordResult to schema CategorizedKeywords."""
+    categories = ["mlops", "nlp_llm", "cloud_aws", "data_engineering", "classical_ml", "other"]
+    result_data = {}
+
+    for category in categories:
+        internal_list = getattr(internal_result, category, [])
+        schema_list = [
+            KeywordWithMetadata(
+                keyword=kw.keyword,
+                category=kw.category,
+                importance=kw.importance,
+                is_matched=kw.is_matched,
+                is_trending=False,  # Will be populated by market trends later
+                demand_level=None,
+            )
+            for kw in internal_list
+        ]
+        result_data[category] = schema_list
+
+    return CategorizedKeywords(**result_data)
+
+
 class ResumeAnalysisService:
     """Service for analyzing job descriptions and matching resumes."""
 
@@ -54,6 +81,7 @@ class ResumeAnalysisService:
         """Initialize the analysis service."""
         self._semantic_matcher = None
         self._keyword_extractor = None
+        self._market_trends = None
 
     @property
     def semantic_matcher(self):
@@ -70,6 +98,14 @@ class ResumeAnalysisService:
             from src.hybrid_keywords import HybridKeywordExtractor
             self._keyword_extractor = HybridKeywordExtractor()
         return self._keyword_extractor
+
+    @property
+    def market_trends(self):
+        """Lazy-load market trends service."""
+        if self._market_trends is None:
+            from src.market_trends import get_market_trends_service
+            self._market_trends = get_market_trends_service()
+        return self._market_trends
 
     def analyze(
         self,
@@ -148,6 +184,8 @@ class ResumeAnalysisService:
         # * Extract keywords using hybrid approach
         key_matches = []
         missing_keywords = []
+        categorized_matches = CategorizedKeywords()
+        categorized_missing = CategorizedKeywords()
 
         try:
             keywords_start = time.perf_counter()
@@ -158,6 +196,16 @@ class ResumeAnalysisService:
                 job_text=job_description,
                 resume_text=resume_text,
             )
+
+            # * Categorize and rank keywords
+            cat_matches, cat_missing = self.keyword_extractor.categorize_and_rank_keywords(
+                key_matches=key_matches,
+                missing_keywords=missing_keywords,
+                job_text=job_description,
+            )
+            categorized_matches = _convert_to_schema_keywords(cat_matches)
+            categorized_missing = _convert_to_schema_keywords(cat_missing)
+
             keywords_duration = time.perf_counter() - keywords_start
             logger.info(
                 "Hybrid keyword extraction complete matches=%s missing=%s duration=%.3fs",
@@ -179,6 +227,8 @@ class ResumeAnalysisService:
             best_variant=best_variant,
             best_variant_display=VARIANT_DISPLAY_NAMES.get(best_variant, best_variant.title()),
             category_scores=category_scores,
+            categorized_matches=categorized_matches,
+            categorized_missing=categorized_missing,
             key_matches=key_matches,
             missing_keywords=missing_keywords,
         )
@@ -187,6 +237,7 @@ class ResumeAnalysisService:
         self,
         job_description: str,
         use_semantic: bool = True,
+        include_market_trends: bool = False,
     ) -> AnalyzeResponse:
         """
         Analyze a job description and find the best resume match (async).
@@ -264,6 +315,8 @@ class ResumeAnalysisService:
         # * Extract keywords using hybrid approach (async)
         key_matches = []
         missing_keywords = []
+        categorized_matches = CategorizedKeywords()
+        categorized_missing = CategorizedKeywords()
 
         try:
             keywords_start = time.perf_counter()
@@ -274,6 +327,17 @@ class ResumeAnalysisService:
                 job_text=job_description,
                 resume_text=resume_text,
             )
+
+            # * Categorize and rank keywords (run in thread as it's CPU-bound)
+            cat_matches, cat_missing = await asyncio.to_thread(
+                self.keyword_extractor.categorize_and_rank_keywords,
+                key_matches,
+                missing_keywords,
+                job_description,
+            )
+            categorized_matches = _convert_to_schema_keywords(cat_matches)
+            categorized_missing = _convert_to_schema_keywords(cat_missing)
+
             keywords_duration = time.perf_counter() - keywords_start
             logger.info(
                 "Hybrid keyword extraction async complete matches=%s missing=%s duration=%.3fs",
@@ -283,6 +347,37 @@ class ResumeAnalysisService:
             )
         except Exception as e:
             logger.error("Keyword extraction async failed: %s", e, exc_info=True)
+
+        # * Optionally fetch market trends
+        market_trends_info = None
+        if include_market_trends:
+            try:
+                trends_start = time.perf_counter()
+                trends = await self.market_trends.fetch_trends_async()
+                trends_duration = time.perf_counter() - trends_start
+
+                market_trends_info = MarketTrendsInfo(
+                    trending_skills=[
+                        TrendingSkillInfo(
+                            skill=s.skill,
+                            category=s.category,
+                            demand_level=s.demand_level,
+                            trend=s.trend,
+                        )
+                        for s in trends.trending_skills
+                    ],
+                    emerging_technologies=trends.emerging_technologies,
+                    industry_insights=trends.industry_insights,
+                    last_updated=trends.last_updated,
+                )
+
+                logger.info(
+                    "Market trends fetched duration=%.3fs skills=%d",
+                    trends_duration,
+                    len(trends.trending_skills),
+                )
+            except Exception as e:
+                logger.warning("Market trends fetch failed: %s", e)
 
         total_duration = time.perf_counter() - start
         logger.info(
@@ -295,6 +390,9 @@ class ResumeAnalysisService:
             best_variant=best_variant,
             best_variant_display=VARIANT_DISPLAY_NAMES.get(best_variant, best_variant.title()),
             category_scores=category_scores,
+            categorized_matches=categorized_matches,
+            categorized_missing=categorized_missing,
+            market_trends=market_trends_info,
             key_matches=key_matches,
             missing_keywords=missing_keywords,
         )
@@ -324,10 +422,21 @@ class VacancyService:
         """
         # * Sanitize filename
         safe_filename = re.sub(r"[^\w\-]", "_", filename.lower())
-        filepath = VACANCIES_DIR / f"{safe_filename}.txt"
 
         # * Ensure directory exists
         VACANCIES_DIR.mkdir(parents=True, exist_ok=True)
+
+        # * If file exists, append _1, _2, etc. to make unique
+        filepath = VACANCIES_DIR / f"{safe_filename}.txt"
+        if filepath.exists():
+            counter = 1
+            while True:
+                new_filename = f"{safe_filename}_{counter}"
+                filepath = VACANCIES_DIR / f"{new_filename}.txt"
+                if not filepath.exists():
+                    safe_filename = new_filename
+                    break
+                counter += 1
 
         # * Build content with metadata header
         content_lines = []

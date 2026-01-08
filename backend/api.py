@@ -101,6 +101,7 @@ async def analyze_job(request: AnalyzeRequest):
         result = await analysis_service.analyze_async(
             job_description=request.job_description,
             use_semantic=request.use_semantic,
+            include_market_trends=request.include_market_trends,
         )
         duration = time.perf_counter() - start
         logger.info(

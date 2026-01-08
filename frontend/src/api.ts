@@ -10,10 +10,63 @@ export interface CategoryScore {
   display_name: string;
 }
 
+// * Keyword category type
+export type KeywordCategory =
+  | 'mlops'
+  | 'nlp_llm'
+  | 'cloud_aws'
+  | 'data_engineering'
+  | 'classical_ml'
+  | 'other';
+
+// * Keyword importance level
+export type KeywordImportance = 'critical' | 'important' | 'nice_to_have';
+
+// * A keyword with category and importance metadata
+export interface KeywordWithMetadata {
+  keyword: string;
+  category: KeywordCategory;
+  importance: KeywordImportance;
+  is_matched: boolean;
+  is_trending: boolean;
+  demand_level: string | null;
+}
+
+// * Keywords grouped by tech category
+export interface CategorizedKeywords {
+  mlops: KeywordWithMetadata[];
+  nlp_llm: KeywordWithMetadata[];
+  cloud_aws: KeywordWithMetadata[];
+  data_engineering: KeywordWithMetadata[];
+  classical_ml: KeywordWithMetadata[];
+  other: KeywordWithMetadata[];
+}
+
+// * Market trends types
+export interface TrendingSkillInfo {
+  skill: string;
+  category: string;
+  demand_level: string;
+  trend: string;
+}
+
+export interface MarketTrendsInfo {
+  trending_skills: TrendingSkillInfo[];
+  emerging_technologies: string[];
+  industry_insights: string;
+  last_updated: string;
+}
+
 export interface AnalyzeResponse {
   best_variant: string;
   best_variant_display: string;
   category_scores: CategoryScore[];
+  // * Rich keyword data (new)
+  categorized_matches: CategorizedKeywords;
+  categorized_missing: CategorizedKeywords;
+  // * Market trends (optional)
+  market_trends?: MarketTrendsInfo;
+  // * Legacy fields (deprecated)
   key_matches: string[];
   missing_keywords: string[];
 }
@@ -51,7 +104,8 @@ export interface ResumeVariantInfo {
  */
 export async function analyzeJob(
   jobDescription: string,
-  useSemantic: boolean = true
+  useSemantic: boolean = true,
+  includeMarketTrends: boolean = false
 ): Promise<AnalyzeResponse> {
   const response = await fetch(`${API_BASE}/analyze`, {
     method: 'POST',
@@ -61,6 +115,7 @@ export async function analyzeJob(
     body: JSON.stringify({
       job_description: jobDescription,
       use_semantic: useSemantic,
+      include_market_trends: includeMarketTrends,
     }),
   });
 

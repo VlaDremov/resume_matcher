@@ -2,7 +2,7 @@
 OpenAI API Client Module.
 
 Provides a wrapper for OpenAI API with support for:
-- Chat completions with structured JSON output
+- Structured outputs using Responses API (new models: gpt-4o-mini, gpt-4o-2024-08-06+)
 - Text embeddings for semantic matching
 - Automatic retries with exponential backoff
 - Async methods for parallel execution
@@ -18,6 +18,8 @@ from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
 # * Configuration
+# * DEFAULT_MODEL: Must support Responses API with Structured Outputs
+# * Supported models: gpt-4o-mini, gpt-4o-2024-08-06, gpt-5-mini, and later models
 DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 MAX_RETRIES = 3
@@ -34,7 +36,7 @@ class LLMClient:
     OpenAI API client with structured output and embedding support.
 
     Supports:
-    - Chat completions with JSON structured output (gpt-4o-mini)
+    - Structured outputs using Responses API (gpt-4o-mini, gpt-4o-2024-08-06+)
     - Text embeddings for semantic similarity (text-embedding-3-small)
     - Automatic retries with exponential backoff
     - Async methods for parallel execution
@@ -51,7 +53,8 @@ class LLMClient:
 
         Args:
             api_key: OpenAI API key. If None, reads from OPENAI_API_KEY env var.
-            model: Model to use for chat completions (default: gpt-4o-mini).
+            model: Model to use for structured outputs (default: gpt-4o-2024-08-06).
+                  Must support Structured Outputs (gpt-4o-mini, gpt-4o-2024-08-06+).
             embedding_model: Model to use for embeddings.
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -76,7 +79,11 @@ class LLMClient:
         temperature: Optional[float] = None,
     ) -> T:
         """
-        Send a chat completion request with structured JSON output (sync).
+        Send a request with structured output using Responses API (sync).
+
+        Uses Responses API parse() method with Structured Outputs for new models (gpt-4o-mini, gpt-4o-2024-08-06+)
+        which ensures schema adherence and type-safety. The parse() method is specifically designed
+        for structured outputs with Pydantic models.
 
         Args:
             prompt: User prompt.
@@ -92,12 +99,64 @@ class LLMClient:
         for attempt in range(MAX_RETRIES):
             try:
                 start = time.perf_counter()
-                request_kwargs = self._build_chat_kwargs(messages, temperature)
-
-                response = self.client.chat.completions.create(**request_kwargs)
+                
+                # * Use Responses API parse() method for structured outputs with Pydantic models
+                # * responses.parse() is specifically designed for structured outputs
+                response = self.client.responses.parse(
+                    model=self.model,
+                    input=messages,
+                    text_format=response_model,
+                    temperature=temperature,
+                )
                 duration = time.perf_counter() - start
 
-                return self._parse_chat_response(response, response_model, duration)
+                # * Responses API parse() returns structured output in response.output[0].content[0].parsed
+                # * Check response structure with proper None handling
+                if not hasattr(response, "output") or not response.output:
+                    raise ValueError("Responses API returned no output")
+                
+                if len(response.output) == 0:
+                    raise ValueError("Responses API returned empty output array")
+                
+                message = response.output[0]
+                
+                # * Check if content exists and is not None
+                if not hasattr(message, "content") or message.content is None:
+                    # * Check for refusal message
+                    refusal = getattr(message, "refusal", None)
+                    if refusal:
+                        raise ValueError(f"Model refused: {refusal}")
+                    raise ValueError("Responses API returned no content (content is None)")
+                
+                if len(message.content) == 0:
+                    raise ValueError("Responses API returned empty content array")
+                
+                text = message.content[0]
+                
+                if hasattr(text, "parsed") and text.parsed is not None:
+                    usage = getattr(response, "usage", None)
+                    token_summary = ""
+                    if usage:
+                        prompt_tokens = getattr(usage, "prompt_tokens", None)
+                        completion_tokens = getattr(usage, "completion_tokens", None)
+                        total_tokens = getattr(usage, "total_tokens", None)
+                        token_summary = (
+                            f" prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}"
+                        )
+                    
+                    logger.info(
+                        "LLM structured success model=%s duration=%.3fs%s",
+                        self.model,
+                        duration,
+                        token_summary,
+                    )
+                    return text.parsed
+                else:
+                    # * Check for refusal message
+                    refusal = getattr(text, "refusal", None)
+                    if refusal:
+                        raise ValueError(f"Model refused: {refusal}")
+                    raise ValueError("Responses API returned no parsed output")
 
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
@@ -124,7 +183,11 @@ class LLMClient:
         temperature: Optional[float] = None,
     ) -> T:
         """
-        Send a chat completion request with structured JSON output (async).
+        Send a request with structured output using Responses API (async).
+
+        Uses Responses API parse() method with Structured Outputs for new models (gpt-4o-mini, gpt-4o-2024-08-06+)
+        which ensures schema adherence and type-safety. The parse() method is specifically designed
+        for structured outputs with Pydantic models.
 
         Args:
             prompt: User prompt.
@@ -140,14 +203,84 @@ class LLMClient:
         for attempt in range(MAX_RETRIES):
             try:
                 start = time.perf_counter()
-                request_kwargs = self._build_chat_kwargs(messages, temperature)
-
-                response = await self.async_client.chat.completions.create(**request_kwargs)
+                
+                # * Use Responses API parse() method for structured outputs with Pydantic models
+                # * responses.parse() is specifically designed for structured outputs
+                response = await self.async_client.responses.parse(
+                    model=self.model,
+                    input=messages,
+                    text_format=response_model,
+                    temperature=temperature,
+                )
                 duration = time.perf_counter() - start
 
-                return self._parse_chat_response(response, response_model, duration)
+                # * Responses API parse() returns structured output in response.output[0].content[0].parsed
+                # * Check response structure with proper None handling
+                if not hasattr(response, "output") or not response.output:
+                    logger.error("Response structure: has output=%s", hasattr(response, "output"))
+                    raise ValueError("Responses API returned no output")
+                
+                if len(response.output) == 0:
+                    raise ValueError("Responses API returned empty output array")
+                
+                message = response.output[0]
+                
+                # * Check if content exists and is not None
+                if not hasattr(message, "content") or message.content is None:
+                    # * Log response structure for debugging
+                    logger.error(
+                        "Response structure error: message.type=%s, has content=%s, content=%s",
+                        getattr(message, "type", None),
+                        hasattr(message, "content"),
+                        message.content if hasattr(message, "content") else "N/A",
+                    )
+                    # * Check for refusal message
+                    refusal = getattr(message, "refusal", None)
+                    if refusal:
+                        raise ValueError(f"Model refused: {refusal}")
+                    raise ValueError("Responses API returned no content (content is None)")
+                
+                if len(message.content) == 0:
+                    raise ValueError("Responses API returned empty content array")
+                
+                text = message.content[0]
+                
+                if hasattr(text, "parsed") and text.parsed is not None:
+                    usage = getattr(response, "usage", None)
+                    token_summary = ""
+                    if usage:
+                        prompt_tokens = getattr(usage, "prompt_tokens", None)
+                        completion_tokens = getattr(usage, "completion_tokens", None)
+                        total_tokens = getattr(usage, "total_tokens", None)
+                        token_summary = (
+                            f" prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}"
+                        )
+                    
+                    logger.info(
+                        "LLM structured async success model=%s duration=%.3fs%s",
+                        self.model,
+                        duration,
+                        token_summary,
+                    )
+                    return text.parsed
+                else:
+                    # * Check for refusal message
+                    refusal = getattr(text, "refusal", None)
+                    if refusal:
+                        raise ValueError(f"Model refused: {refusal}")
+                    raise ValueError("Responses API returned no parsed output")
 
             except Exception as e:
+                # * Log more details about the error
+                logger.error(
+                    "LLM structured async error attempt %s/%s: %s (type: %s)",
+                    attempt + 1,
+                    MAX_RETRIES,
+                    e,
+                    type(e).__name__,
+                    exc_info=True,
+                )
+                
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_DELAY * (2 ** attempt)
                     logger.warning(
@@ -170,101 +303,24 @@ class LLMClient:
         response_model: Type[T],
         system_prompt: Optional[str],
     ) -> list[dict]:
-        """Build messages list for chat completion."""
-        schema_json = response_model.model_json_schema()
-        json_instruction = (
-            f"You must respond with valid JSON matching this schema:\n"
-            f"{schema_json}\n\n"
-            "Do not include any text outside the JSON object."
-        )
+        """
+        Build messages list for Responses API.
 
-        full_system_prompt = json_instruction
+        Responses API parse() method accepts input as either:
+        - A string (simple text input)
+        - A list of message objects with role and content
+
+        Note: With Structured Outputs, we don't need JSON formatting instructions
+        in the prompt - the schema is handled automatically by the API via text_format parameter.
+        """
+        messages = []
+        
         if system_prompt:
-            full_system_prompt = f"{system_prompt}\n\n{json_instruction}"
-
-        return [
-            {"role": "system", "content": full_system_prompt},
-            {"role": "user", "content": prompt},
-        ]
-
-    def _build_chat_kwargs(
-        self,
-        messages: list[dict],
-        temperature: Optional[float],
-    ) -> dict:
-        """Build kwargs for chat completion request."""
-        request_kwargs = {
-            "model": self.model,
-            "messages": messages,
-            "max_completion_tokens": 4000,
-            "response_format": {"type": "json_object"},
-        }
-
-        if temperature is not None:
-            request_kwargs["temperature"] = temperature
-
-        return request_kwargs
-
-    def _parse_chat_response(
-        self,
-        response,
-        response_model: Type[T],
-        duration: float,
-    ) -> T:
-        """Parse chat completion response into Pydantic model."""
-        usage = getattr(response, "usage", None)
-        token_summary = ""
-        if usage:
-            prompt_tokens = getattr(usage, "prompt_tokens", None)
-            completion_tokens = getattr(usage, "completion_tokens", None)
-            total_tokens = getattr(usage, "total_tokens", None)
-            token_summary = (
-                f" prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}"
-            )
-
-        message = response.choices[0].message
-        raw_content: Union[str, dict, BaseModel, None] = getattr(message, "content", None)
-        parsed = getattr(message, "parsed", None)
-
-        if parsed is not None:
-            if isinstance(parsed, BaseModel):
-                logger.info(
-                    "LLM structured success model=%s duration=%.3fs%s",
-                    self.model,
-                    duration,
-                    token_summary,
-                )
-                return response_model.model_validate(parsed.model_dump())
-            if isinstance(parsed, dict):
-                logger.info(
-                    "LLM structured success model=%s duration=%.3fs%s",
-                    self.model,
-                    duration,
-                    token_summary,
-                )
-                return response_model.model_validate(parsed)
-            if isinstance(parsed, str):
-                raw_content = parsed
-
-        if raw_content is None or (isinstance(raw_content, str) and not raw_content.strip()):
-            raise ValueError("Received empty content from LLM")
-
-        if isinstance(raw_content, dict):
-            logger.info(
-                "LLM structured success model=%s duration=%.3fs%s",
-                self.model,
-                duration,
-                token_summary,
-            )
-            return response_model.model_validate(raw_content)
-
-        logger.info(
-            "LLM structured success model=%s duration=%.3fs%s",
-            self.model,
-            duration,
-            token_summary,
-        )
-        return response_model.model_validate_json(str(raw_content))
+            messages.append({"role": "system", "content": system_prompt})
+        
+        messages.append({"role": "user", "content": prompt})
+        
+        return messages
 
     def get_embedding(self, text: str) -> list[float]:
         """

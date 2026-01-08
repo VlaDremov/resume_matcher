@@ -3,14 +3,22 @@ Resume Variant Generator.
 
 Generates 5 keyword-optimized LaTeX resume versions based on
 different focus areas (MLOps, NLP/LLM, Cloud, Data Engineering, Classical ML).
+
+Supports two modes:
+- Basic: Reorder bullets and skills (fast, no API calls)
+- GPT Rewrite: Use GPT to genuinely rewrite content (slower, better differentiation)
 """
 
+import asyncio
+import logging
 import re
 from pathlib import Path
 from typing import Optional
 
 from src.data_extraction import parse_latex_resume
 from src.keyword_engine import get_resume_themes
+
+logger = logging.getLogger("resume_matcher.generator")
 
 
 def generate_all_variants(
@@ -211,48 +219,88 @@ def _get_category_order_for_theme(theme_config: dict, available_categories: list
 
 def _enhance_experience_bullets(content: str, theme_config: dict) -> str:
     """
-    Enhance experience bullet points with theme-relevant keywords.
+    Reorder experience bullet points to prioritize theme-relevant items.
 
-    This performs light rewrites - adding emphasis to existing keywords
-    rather than completely rewriting bullets.
+    Bullets are scored based on keyword matches and reordered within each
+    position so that most relevant bullets appear first.
 
     Args:
         content: LaTeX content.
         theme_config: Theme configuration.
 
     Returns:
-        Modified LaTeX content.
+        Modified LaTeX content with reordered bullets.
     """
     experience_keywords = theme_config.get("experience_keywords", [])
+    primary_category = theme_config.get("primary_category", "")
 
-    if not experience_keywords:
+    # * Get additional keywords from taxonomy
+    from src.keyword_engine import TECH_TAXONOMY
+    taxonomy_keywords = TECH_TAXONOMY.get(primary_category, [])
+
+    # * Combine all relevant keywords
+    all_keywords = set(kw.lower() for kw in experience_keywords)
+    all_keywords.update(kw.lower() for kw in taxonomy_keywords)
+
+    if not all_keywords:
         return content
 
-    # * Find all resumeItem entries
-    item_pattern = re.compile(r"(\\resumeItem\{)([^}]+)(\})")
+    # * Find each resumeItemListStart ... resumeItemListEnd block
+    item_list_pattern = re.compile(
+        r"(\\resumeItemListStart\s*\n)(.*?)(\\resumeItemListEnd)",
+        re.DOTALL,
+    )
 
-    def enhance_bullet(match):
+    def reorder_bullet_list(match):
         prefix = match.group(1)
-        bullet_text = match.group(2)
+        items_block = match.group(2)
         suffix = match.group(3)
 
-        # * Check if bullet already contains theme keywords
-        bullet_lower = bullet_text.lower()
-        keyword_count = sum(1 for kw in experience_keywords if kw.lower() in bullet_lower)
+        # * Extract individual bullet items with their line structure
+        # * Match lines that start with \resumeItem (with leading whitespace)
+        item_pattern = re.compile(
+            r"^(\s*\\resumeItem\{.*?\})[ \t]*$",
+            re.MULTILINE,
+        )
 
-        if keyword_count > 0:
-            # * Bullet is already relevant - maybe bold key terms
-            for keyword in experience_keywords:
-                # * Bold exact keyword matches (case-insensitive)
-                pattern = re.compile(f"\\b({re.escape(keyword)})\\b", re.IGNORECASE)
-                # * Only bold if not already in a LaTeX command
-                if f"\\textbf{{{keyword}}}" not in bullet_text:
-                    # * Add subtle emphasis by keeping as-is (no over-bolding)
-                    pass
+        items = item_pattern.findall(items_block)
 
-        return prefix + bullet_text + suffix
+        if len(items) <= 1:
+            return match.group(0)  # * Nothing to reorder
 
-    content = item_pattern.sub(enhance_bullet, content)
+        # * Score each bullet based on keyword relevance
+        def score_bullet(bullet_text: str) -> tuple[int, int]:
+            """
+            Return (primary_score, secondary_score) for sorting.
+            Higher score = more relevant to theme.
+            """
+            text_lower = bullet_text.lower()
+
+            primary_matches = 0
+            secondary_matches = 0
+
+            for keyword in all_keywords:
+                if keyword in text_lower:
+                    # * Count exact matches (more specific = higher score)
+                    count = text_lower.count(keyword)
+                    if keyword in [kw.lower() for kw in experience_keywords]:
+                        primary_matches += count * len(keyword)  # * Weight by keyword length
+                    else:
+                        secondary_matches += count
+
+            return (primary_matches, secondary_matches)
+
+        # * Sort bullets by relevance (descending)
+        scored_items = [(score_bullet(item), idx, item) for idx, item in enumerate(items)]
+        scored_items.sort(key=lambda x: (-x[0][0], -x[0][1], x[1]))  # * Stable sort by original index
+
+        # * Rebuild the items block with proper newlines
+        reordered_items = [item.strip() for _, _, item in scored_items]
+        new_items_block = "\n    ".join(reordered_items) + "\n  "
+
+        return prefix + new_items_block + suffix
+
+    content = item_list_pattern.sub(reorder_bullet_list, content)
 
     return content
 
@@ -388,4 +436,138 @@ def list_available_variants() -> list[dict]:
     """
     themes = get_resume_themes()
     return [get_variant_metadata(name) for name in themes]
+
+
+# ===== GPT-Powered Variant Generation =====
+
+
+async def generate_all_variants_with_gpt_async(
+    source_resume_path: str | Path,
+    output_dir: str | Path,
+) -> dict[str, Path]:
+    """
+    Generate all 5 resume variants with GPT-powered content rewriting (async).
+
+    This creates genuinely different variants by rewriting bullet points
+    and summaries for each theme, rather than just reordering.
+
+    Args:
+        source_resume_path: Path to the source resume.tex file.
+        output_dir: Directory to write generated variants.
+
+    Returns:
+        Dictionary mapping theme name to output file path.
+    """
+    from src.bullet_rewriter import (
+        BulletRewriter,
+        apply_rewritten_bullets_to_latex,
+        apply_rewritten_summary_to_latex,
+        extract_bullets_from_latex,
+        extract_summary_from_latex,
+    )
+
+    source_resume_path = Path(source_resume_path)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # * Read source resume
+    with open(source_resume_path, "r", encoding="utf-8") as f:
+        source_content = f.read()
+
+    themes = get_resume_themes()
+    generated_files = {}
+
+    # * Extract bullets and summary once
+    original_bullets = extract_bullets_from_latex(source_content)
+    original_summary = extract_summary_from_latex(source_content)
+
+    logger.info(
+        "Extracted %d bullets and summary for GPT rewriting",
+        len(original_bullets),
+    )
+
+    # * Initialize rewriter
+    rewriter = BulletRewriter()
+
+    # * Rewrite bullets for all themes in parallel
+    rewrite_tasks = []
+    for theme_name, theme_config in themes.items():
+        bullet_task = rewriter.rewrite_bullets_async(
+            original_bullets, theme_name, theme_config
+        )
+        summary_task = rewriter.rewrite_summary_async(
+            original_summary, theme_name, theme_config
+        )
+        rewrite_tasks.append((theme_name, bullet_task, summary_task))
+
+    # * Wait for all rewrites to complete
+    logger.info("Starting GPT rewriting for %d themes...", len(themes))
+
+    results_by_theme = {}
+    for theme_name, bullet_task, summary_task in rewrite_tasks:
+        try:
+            bullets_result = await bullet_task
+            summary_result = await summary_task
+            results_by_theme[theme_name] = (bullets_result, summary_result)
+            logger.info("Completed rewriting for theme: %s", theme_name)
+        except Exception as e:
+            logger.error("Failed to rewrite for theme %s: %s", theme_name, e)
+            results_by_theme[theme_name] = None
+
+    # * Generate each variant with rewritten content
+    for theme_name, theme_config in themes.items():
+        output_path = output_dir / f"resume_{theme_name}.tex"
+
+        # * Start with basic variant (reordering)
+        variant_content = _generate_variant(source_content, theme_name, theme_config)
+
+        # * Apply GPT rewrites if available
+        rewrite_result = results_by_theme.get(theme_name)
+        if rewrite_result:
+            bullets_result, summary_result = rewrite_result
+
+            # * Apply rewritten bullets
+            if bullets_result:
+                variant_content = apply_rewritten_bullets_to_latex(
+                    variant_content,
+                    original_bullets,
+                    bullets_result,
+                )
+
+            # * Apply rewritten summary
+            if summary_result and summary_result.summary != original_summary:
+                variant_content = apply_rewritten_summary_to_latex(
+                    variant_content,
+                    summary_result,
+                )
+
+        # * Write to file
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(variant_content)
+
+        generated_files[theme_name] = output_path
+        logger.info("Generated with GPT rewriting: %s", output_path)
+
+    return generated_files
+
+
+def generate_all_variants_with_gpt(
+    source_resume_path: str | Path,
+    output_dir: str | Path,
+) -> dict[str, Path]:
+    """
+    Generate all 5 resume variants with GPT-powered content rewriting (sync).
+
+    Wrapper for async version.
+
+    Args:
+        source_resume_path: Path to the source resume.tex file.
+        output_dir: Directory to write generated variants.
+
+    Returns:
+        Dictionary mapping theme name to output file path.
+    """
+    return asyncio.run(
+        generate_all_variants_with_gpt_async(source_resume_path, output_dir)
+    )
 

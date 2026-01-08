@@ -59,7 +59,12 @@ def cli():
     default=True,
     help="Compile LaTeX to PDF (requires pdflatex)",
 )
-def generate(resume: str, output: str, compile_pdf: bool):
+@click.option(
+    "--use-gpt-rewrite/--no-gpt-rewrite",
+    default=False,
+    help="Use GPT to genuinely rewrite content per theme (costs ~$0.05, creates meaningfully different variants)",
+)
+def generate(resume: str, output: str, compile_pdf: bool, use_gpt_rewrite: bool):
     """
     Generate all 5 keyword-optimized resume variants.
 
@@ -69,15 +74,34 @@ def generate(resume: str, output: str, compile_pdf: bool):
     - Cloud & AWS Infrastructure
     - Data Engineering & Pipelines
     - Classical ML & Analytics
+
+    Use --use-gpt-rewrite for genuinely different variants (recommended).
     """
+    import os
+
     from src.latex_compiler import check_pdflatex_installed, compile_latex_to_pdf
-    from src.resume_generator import generate_all_variants, list_available_variants
+    from src.resume_generator import (
+        generate_all_variants,
+        generate_all_variants_with_gpt,
+        list_available_variants,
+    )
 
     resume_path = Path(resume)
     output_dir = Path(output)
 
     click.echo(f"Source resume: {resume_path}")
     click.echo(f"Output directory: {output_dir}")
+
+    if use_gpt_rewrite:
+        if not os.getenv("OPENAI_API_KEY"):
+            click.echo("Error: OPENAI_API_KEY not set for GPT rewriting.", err=True)
+            click.echo("Set it via: export OPENAI_API_KEY='sk-...'")
+            click.echo("Or use --no-gpt-rewrite for basic generation.")
+            sys.exit(1)
+        click.echo("Mode: GPT-powered content rewriting (creates unique variants)")
+    else:
+        click.echo("Mode: Basic reordering (use --use-gpt-rewrite for better differentiation)")
+
     click.echo()
 
     # * List variants to be generated
@@ -88,8 +112,13 @@ def generate(resume: str, output: str, compile_pdf: bool):
 
     # * Generate variants
     try:
-        generated = generate_all_variants(resume_path, output_dir)
-        click.echo(f"\n✓ Generated {len(generated)} LaTeX variants")
+        if use_gpt_rewrite:
+            click.echo("Using GPT to rewrite content (this may take 30-60 seconds)...")
+            generated = generate_all_variants_with_gpt(resume_path, output_dir)
+            click.echo(f"\n✓ Generated {len(generated)} GPT-rewritten LaTeX variants")
+        else:
+            generated = generate_all_variants(resume_path, output_dir)
+            click.echo(f"\n✓ Generated {len(generated)} LaTeX variants")
     except Exception as e:
         click.echo(f"✗ Error generating variants: {e}", err=True)
         sys.exit(1)

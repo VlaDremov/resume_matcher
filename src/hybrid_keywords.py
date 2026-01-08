@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from src.keyword_engine import (
     TECH_TAXONOMY,
+    cluster_keywords,
     extract_keywords_from_text,
 )
 
@@ -32,6 +33,26 @@ class KeywordAnalysis(BaseModel):
         default_factory=list,
         description="Important job keywords not found in resume",
     )
+
+
+class KeywordWithMeta(BaseModel):
+    """A keyword with category and importance metadata."""
+
+    keyword: str
+    category: str
+    importance: str  # "critical", "important", "nice_to_have"
+    is_matched: bool = False
+
+
+class CategorizedKeywordResult(BaseModel):
+    """Result with keywords grouped by category."""
+
+    mlops: list[KeywordWithMeta] = Field(default_factory=list)
+    nlp_llm: list[KeywordWithMeta] = Field(default_factory=list)
+    cloud_aws: list[KeywordWithMeta] = Field(default_factory=list)
+    data_engineering: list[KeywordWithMeta] = Field(default_factory=list)
+    classical_ml: list[KeywordWithMeta] = Field(default_factory=list)
+    other: list[KeywordWithMeta] = Field(default_factory=list)
 
 
 class HybridKeywordExtractor:
@@ -120,25 +141,22 @@ class HybridKeywordExtractor:
         resume_text: str,
     ) -> tuple[str, str]:
         """Build system prompt and user prompt for GPT extraction."""
-        system_prompt = """You are an expert resume analyzer for ML/Data Science positions.
-
-Analyze the job description and resume content to identify:
-1. key_matches: Important technical skills and keywords from the job that ARE present in the resume
-2. missing_keywords: Important technical skills and keywords from the job that are NOT in the resume
-
+        system_prompt = """You are an expert resume analyzer for ML Engineering/Data Science positions.
+Given a job description and several versions of a resume, analyze each resume to:
+1. Identify key_matches: Important technical skills and keywords from the job that ARE present in each resume.
+2. Identify missing_keywords: Important technical skills and keywords from the job that are NOT in each resume.
 Focus on:
 - Technical skills (Python, TensorFlow, etc.)
 - Tools and frameworks (Docker, Kubernetes, etc.)
 - Methodologies (MLOps, CI/CD, etc.)
 - Domain expertise (NLP, Computer Vision, etc.)
-
 Be concise. Return only the most important 15-20 keywords per category."""
 
         prompt = f"""Job Description:
 {job_text[:4000]}
 
 Resume Content:
-{resume_text[:4000]}
+{resume_text}
 
 Analyze which job keywords match the resume and which are missing."""
 
@@ -160,6 +178,7 @@ Analyze which job keywords match the resume and which are missing."""
             Tuple of (key_matches, missing_keywords), or None if failed.
         """
         if not self._use_gpt or self.llm_client is None:
+            logger.debug("GPT extraction skipped: use_gpt=%s, client=%s", self._use_gpt, self.llm_client)
             return None
 
         system_prompt, prompt = self._build_gpt_prompt(job_text, resume_text)
@@ -169,7 +188,12 @@ Analyze which job keywords match the resume and which are missing."""
                 prompt=prompt,
                 response_model=KeywordAnalysis,
                 system_prompt=system_prompt,
-                temperature=0.2,
+                # temperature=0.3,  # * Slightly higher for more diverse keyword extraction
+            )
+            logger.debug(
+                "GPT extraction raw result: matches=%d, missing=%d",
+                len(result.key_matches),
+                len(result.missing_keywords),
             )
             return result.key_matches, result.missing_keywords
         except Exception as e:
@@ -192,6 +216,7 @@ Analyze which job keywords match the resume and which are missing."""
             Tuple of (key_matches, missing_keywords), or None if failed.
         """
         if not self._use_gpt or self.llm_client is None:
+            logger.debug("GPT extraction async skipped: use_gpt=%s, client=%s", self._use_gpt, self.llm_client)
             return None
 
         system_prompt, prompt = self._build_gpt_prompt(job_text, resume_text)
@@ -201,7 +226,12 @@ Analyze which job keywords match the resume and which are missing."""
                 prompt=prompt,
                 response_model=KeywordAnalysis,
                 system_prompt=system_prompt,
-                temperature=0.2,
+                # temperature=0.3,  # * Slightly higher for more diverse keyword extraction
+            )
+            logger.debug(
+                "GPT extraction async raw result: matches=%d, missing=%d",
+                len(result.key_matches),
+                len(result.missing_keywords),
             )
             return result.key_matches, result.missing_keywords
         except Exception as e:
@@ -360,6 +390,108 @@ Analyze which job keywords match the resume and which are missing."""
                 result.append(kw)
 
         return result
+
+    def _score_importance(self, keyword: str, job_text: str) -> str:
+        """
+        Score keyword importance based on frequency and position in job description.
+
+        Args:
+            keyword: The keyword to score.
+            job_text: Full job description text.
+
+        Returns:
+            Importance level: "critical", "important", or "nice_to_have".
+        """
+        text_lower = job_text.lower()
+        kw_lower = keyword.lower()
+
+        # * Count occurrences
+        count = text_lower.count(kw_lower)
+
+        # * Check position (earlier in text = more important)
+        first_pos = text_lower.find(kw_lower)
+        is_early = first_pos < len(job_text) // 3 if first_pos >= 0 else False
+
+        # * Check if in requirements/qualifications section
+        in_requirements = False
+        for line in job_text.split("\n"):
+            line_lower = line.lower()
+            if ("require" in line_lower or "qualif" in line_lower or "must have" in line_lower):
+                if kw_lower in line_lower:
+                    in_requirements = True
+                    break
+
+        # * Determine importance
+        if count >= 3 or in_requirements:
+            return "critical"
+        elif count >= 2 or is_early:
+            return "important"
+        else:
+            return "nice_to_have"
+
+    def categorize_and_rank_keywords(
+        self,
+        key_matches: list[str],
+        missing_keywords: list[str],
+        job_text: str,
+    ) -> tuple[CategorizedKeywordResult, CategorizedKeywordResult]:
+        """
+        Categorize keywords and assign importance levels.
+
+        Uses cluster_keywords() from keyword_engine and adds importance scoring.
+
+        Args:
+            key_matches: Keywords found in resume.
+            missing_keywords: Keywords not found in resume.
+            job_text: Original job description for importance scoring.
+
+        Returns:
+            Tuple of (categorized_matches, categorized_missing).
+        """
+        # * Categorize using existing function
+        matches_by_category = cluster_keywords(key_matches)
+        missing_by_category = cluster_keywords(missing_keywords)
+
+        def build_categorized_result(
+            keywords_by_category: dict[str, list[str]],
+            is_matched: bool,
+        ) -> CategorizedKeywordResult:
+            """Build CategorizedKeywordResult with importance scoring."""
+            result_data = {}
+
+            for category in ["mlops", "nlp_llm", "cloud_aws", "data_engineering", "classical_ml", "other"]:
+                keywords = keywords_by_category.get(category, [])
+                keyword_metas = []
+
+                for kw in keywords:
+                    importance = self._score_importance(kw, job_text)
+                    keyword_metas.append(KeywordWithMeta(
+                        keyword=kw,
+                        category=category,
+                        importance=importance,
+                        is_matched=is_matched,
+                    ))
+
+                # * Sort by importance: critical > important > nice_to_have
+                importance_order = {"critical": 0, "important": 1, "nice_to_have": 2}
+                keyword_metas.sort(key=lambda x: importance_order.get(x.importance, 3))
+
+                result_data[category] = keyword_metas
+
+            return CategorizedKeywordResult(**result_data)
+
+        categorized_matches = build_categorized_result(matches_by_category, is_matched=True)
+        categorized_missing = build_categorized_result(missing_by_category, is_matched=False)
+
+        logger.info(
+            "Keywords categorized: matches=%d categories, missing=%d categories",
+            sum(1 for cat in ["mlops", "nlp_llm", "cloud_aws", "data_engineering", "classical_ml", "other"]
+                if getattr(categorized_matches, cat)),
+            sum(1 for cat in ["mlops", "nlp_llm", "cloud_aws", "data_engineering", "classical_ml", "other"]
+                if getattr(categorized_missing, cat)),
+        )
+
+        return categorized_matches, categorized_missing
 
 
 # * Global instance
