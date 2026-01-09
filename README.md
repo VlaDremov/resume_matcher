@@ -8,6 +8,7 @@ A Python tool that generates keyword-optimized resume variants and matches them 
 - **Semantic Matching**: Uses OpenAI embeddings for understanding synonyms and context
 - **Intelligent Bullet Rewriting**: GPT-5 rewrites experience bullets to emphasize job-relevant keywords
 - **Structured Scoring**: Returns relevancy score (0-100) with detailed analysis
+- **Vacancy-Aware Keyword Base**: Saved vacancy descriptions are used to bias keyword extraction for future analyses
 
 ### Web Interface (FastAPI + React)
 - Modern dark-themed UI
@@ -15,12 +16,10 @@ A Python tool that generates keyword-optimized resume variants and matches them 
 - PDF resume preview
 - Save vacancies to database for future reference
 
-### 5 Resume Variants
-- **MLOps & Platform Engineering** - CI/CD, Docker, Kubernetes, model deployment
-- **NLP & LLM Engineering** - LangChain, transformers, RAG, prompt engineering
-- **Cloud & AWS Infrastructure** - Sagemaker, EC2, S3, cloud-native solutions
-- **Data Engineering & Pipelines** - Spark, Airflow, Kafka, ETL
-- **Classical ML & Analytics** - XGBoost, scikit-learn, A/B testing
+### 3 Resume Variants
+- **Research & Advanced ML** - Experiments, statistical rigor, model optimization
+- **Applied ML & Production Systems** - MLOps, deployment, pipelines, monitoring
+- **Generative AI & LLM Engineering** - LLM apps, RAG, agents, prompt engineering
 
 ## Installation
 
@@ -65,17 +64,17 @@ cd frontend && npm run dev
 ### CLI Commands
 
 ```bash
-# Generate all 5 resume variants
+# Generate all 3 resume variants
 python main.py generate
-
-# Match a job to best resume (V1 - keyword-based)
-python main.py match vacancies/asos.txt --explain
 
 # Tailor resume with GPT-5 analysis (V2)
 python main.py tailor vacancies/google.txt
 
 # Preview GPT-5 bullet rewrites
 python main.py tailor vacancies/google.txt --preview
+
+# Cluster vacancies into keyword groups
+python main.py cluster-vacancies
 
 # Analyze keywords from vacancies
 python main.py analyze --top 30
@@ -98,8 +97,10 @@ resume_matcher/
 │   ├── bullet_rewriter.py  # GPT-5 bullet optimization
 │   ├── keyword_engine.py   # Keyword extraction
 │   ├── resume_generator.py # LaTeX variant generator
-│   ├── matcher.py          # Legacy keyword matching
+│   ├── vacancy_clustering.py # Vacancy clustering pipeline
 │   └── ...
+├── deprecated/
+│   ├── linkedin_scraper.py # Deprecated LinkedIn scraper
 ├── backend/
 │   ├── api.py              # FastAPI endpoints
 │   ├── schemas.py          # Pydantic models

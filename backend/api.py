@@ -21,7 +21,6 @@ from fastapi.responses import FileResponse
 from backend.schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
-    ErrorResponse,
     SaveVacancyRequest,
     SaveVacancyResponse,
     VacanciesListResponse,
@@ -259,4 +258,3 @@ async def get_vacancy(filename: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

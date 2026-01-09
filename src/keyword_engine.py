@@ -5,6 +5,8 @@ Extracts keywords from job descriptions and clusters them into
 categories for resume variant generation.
 """
 
+import math
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -26,44 +28,25 @@ except OSError:
 
 # * Predefined technology taxonomy for better keyword recognition
 TECH_TAXONOMY = {
-    "mlops": [
-        "mlops", "ml ops", "mlflow", "kubeflow", "model registry", "model monitoring",
-        "feature store", "experiment tracking", "model deployment", "model serving",
-        "ci/cd", "cicd", "continuous integration", "continuous deployment",
-        "docker", "kubernetes", "k8s", "containerization", "helm",
+    "research_ml": [
+        "deep learning", "neural network", "neural networks", "pytorch", "tensorflow",
+        "statistical analysis", "statistical", "optimization", "research", "experiments",
+        "xgboost", "catboost", "model performance", "algorithms", "classification",
+        "regression", "forecasting", "prophet", "bayesian", "time series",
+        "feature selection", "model evaluation", "hyperparameter tuning",
     ],
-    "nlp_llm": [
-        "nlp", "natural language processing", "llm", "large language model",
-        "langchain", "langgraph", "transformer", "bert", "gpt", "chatgpt",
-        "openai", "huggingface", "hugging face", "rag", "retrieval augmented",
-        "prompt engineering", "fine-tuning", "embeddings", "vector database",
-        "pinecone", "faiss", "chromadb", "text generation", "sentiment analysis",
-        "named entity recognition", "ner", "tokenization",
+    "applied_production": [
+        "production", "pipeline", "deployment", "mlops", "docker", "kubernetes",
+        "ci/cd", "cicd", "airflow", "mlflow", "sagemaker", "a/b testing",
+        "ab testing", "monitoring", "feature engineering", "sql", "clickhouse",
+        "infrastructure", "scaling", "automation", "retraining",
+        "data pipeline", "containerization", "orchestration",
     ],
-    "cloud_aws": [
-        "aws", "amazon web services", "sagemaker", "ec2", "s3", "lambda",
-        "bedrock", "step functions", "cloudwatch", "iam", "vpc",
-        "azure", "microsoft azure", "databricks", "gcp", "google cloud",
-        "bigquery", "cloud functions", "cloud run", "vertex ai",
-        "cloud infrastructure", "terraform", "cloudformation",
-    ],
-    "data_engineering": [
-        "spark", "pyspark", "apache spark", "hadoop", "hive", "emr",
-        "airflow", "apache airflow", "dag", "etl", "elt", "data pipeline",
-        "kafka", "apache kafka", "streaming", "batch processing",
-        "data warehouse", "data lake", "snowflake", "redshift",
-        "clickhouse", "postgresql", "mysql", "sql", "nosql", "mongodb",
-        "data quality", "data governance", "dbt",
-    ],
-    "classical_ml": [
-        "machine learning", "scikit-learn", "sklearn", "xgboost", "catboost",
-        "lightgbm", "lgbm", "gradient boosting", "random forest",
-        "logistic regression", "linear regression", "classification",
-        "regression", "clustering", "feature engineering", "feature selection",
-        "cross-validation", "hyperparameter tuning", "grid search",
-        "model evaluation", "a/b testing", "ab testing", "experimentation",
-        "churn prediction", "recommendation", "forecasting", "time series",
-        "prophet", "arima", "anomaly detection",
+    "genai_llm": [
+        "llm", "langchain", "langgraph", "rag", "embeddings", "prompt engineering",
+        "gpt", "vector database", "agents", "fastapi", "rest api", "retrieval",
+        "generation", "telegram bot", "automated", "chatbot", "openai",
+        "huggingface", "transformer",
     ],
 }
 
@@ -72,14 +55,77 @@ ALL_TECH_KEYWORDS = set()
 for keywords in TECH_TAXONOMY.values():
     ALL_TECH_KEYWORDS.update(keywords)
 
+DEFAULT_VACANCIES_DIR = Path(__file__).resolve().parents[1] / "vacancies"
+VACANCIES_DIR = Path(os.getenv("VACANCIES_DIR", str(DEFAULT_VACANCIES_DIR)))
+USE_VACANCY_KEYWORD_BASE = os.getenv("USE_VACANCY_KEYWORD_BASE", "true").lower() == "true"
+VACANCY_BASE_TOP_N = int(os.getenv("VACANCY_BASE_TOP_N", "200"))
+VACANCY_BASE_MAX_BOOST = float(os.getenv("VACANCY_BASE_MAX_BOOST", "5.0"))
 
-def extract_keywords_from_text(text: str, top_n: int = 50) -> list[tuple[str, float]]:
+_VACANCY_BASE_CACHE = None
+_VACANCY_BASE_SIGNATURE = None
+
+
+def _vacancy_files_signature(vacancies_dir: Path) -> tuple[tuple[str, int, int], ...]:
+    """Build a lightweight signature for vacancy files to detect changes."""
+    if not vacancies_dir.exists():
+        return ()
+
+    signature = []
+    for file_path in sorted(vacancies_dir.glob("*.txt")):
+        try:
+            stat = file_path.stat()
+        except OSError:
+            continue
+        signature.append((file_path.name, stat.st_mtime_ns, stat.st_size))
+
+    return tuple(signature)
+
+
+def _get_vacancy_keyword_base(
+    vacancies_dir: Optional[str | Path] = None,
+) -> dict[str, float]:
+    """Load or compute the aggregated vacancy keyword base."""
+    if not USE_VACANCY_KEYWORD_BASE:
+        return {}
+
+    base_dir = Path(vacancies_dir) if vacancies_dir else VACANCIES_DIR
+    if not base_dir.exists():
+        return {}
+
+    signature = _vacancy_files_signature(base_dir)
+    global _VACANCY_BASE_CACHE, _VACANCY_BASE_SIGNATURE
+    if signature == _VACANCY_BASE_SIGNATURE and _VACANCY_BASE_CACHE is not None:
+        return _VACANCY_BASE_CACHE
+
+    try:
+        report = analyze_vacancies(
+            base_dir,
+            top_n=VACANCY_BASE_TOP_N,
+            use_vacancy_base=False,
+        )
+    except Exception:
+        return {}
+
+    keywords = report.get("keywords", [])
+    base = {keyword.lower(): float(score) for keyword, score in keywords}
+
+    _VACANCY_BASE_CACHE = base
+    _VACANCY_BASE_SIGNATURE = signature
+    return base
+
+
+def extract_keywords_from_text(
+    text: str,
+    top_n: int = 50,
+    use_vacancy_base: bool = True,
+) -> list[tuple[str, float]]:
     """
     Extract keywords from text using TF-IDF and NLP.
 
     Args:
         text: Input text to extract keywords from.
         top_n: Number of top keywords to return.
+        use_vacancy_base: Whether to boost keywords using saved vacancies.
 
     Returns:
         List of (keyword, score) tuples sorted by score descending.
@@ -124,8 +170,81 @@ def extract_keywords_from_text(text: str, top_n: int = 50) -> list[tuple[str, fl
         for match in matches:
             keywords[match.lower()] += 1
 
+    # * 4. Boost keywords that are common across saved vacancies
+    if use_vacancy_base:
+        vacancy_base = _get_vacancy_keyword_base()
+        if vacancy_base:
+            for keyword, base_score in vacancy_base.items():
+                if keyword in text_lower:
+                    count = text_lower.count(keyword)
+                    if count:
+                        boost = min(
+                            VACANCY_BASE_MAX_BOOST,
+                            1.0 + math.log1p(base_score),
+                        )
+                        keywords[keyword] += count * boost
+
     # * Return top N keywords
     return keywords.most_common(top_n)
+
+
+def get_technology_patterns() -> list[re.Pattern]:
+    """Regex patterns for detecting specific technologies."""
+    return [
+        re.compile(
+            r"\b(?:pytorch|tensorflow|catboost|xgboost|lightgbm|scikit[- ]learn|hugging\s*face"
+            r"|langchain|langgraph|fastapi|mlflow|airflow|spark|kafka)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:aws|sagemaker|ec2|s3|lambda|gcp|google\s*cloud|bigquery|azure|databricks)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:docker|kubernetes|k8s|terraform|helm|ci\s*/\s*cd)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:python|sql|go|golang|rust|java|scala|r)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:vector\s+db|vector\s+database|pinecone|faiss|chromadb|weaviate)\b",
+            re.IGNORECASE,
+        ),
+    ]
+
+
+def extract_keywords_hybrid(text: str) -> list[tuple[str, float]]:
+    """Combine TF-IDF + taxonomy + patterns with weighted scoring."""
+    if not text.strip():
+        return []
+
+    keywords = Counter()
+
+    # * Base extraction (NER + taxonomy + patterns)
+    base_keywords = extract_keywords_from_text(
+        text,
+        top_n=80,
+        use_vacancy_base=False,
+    )
+    for keyword, score in base_keywords:
+        normalized = re.sub(r"\s+", " ", keyword.strip().lower())
+        keywords[normalized] += float(score)
+
+    # * Lightweight TF-IDF for the document
+    tfidf_keywords = extract_keywords_tfidf([text], top_n_per_doc=30).get(0, [])
+    for keyword, score in tfidf_keywords:
+        normalized = re.sub(r"\s+", " ", keyword.strip().lower())
+        keywords[normalized] += float(score) * 8
+
+    # * Explicit technology pattern matches
+    for pattern in get_technology_patterns():
+        for match in pattern.findall(text):
+            normalized = re.sub(r"\s+", " ", match.strip().lower())
+            keywords[normalized] += 3
+
+    return keywords.most_common(60)
 
 
 def extract_keywords_tfidf(
@@ -196,7 +315,7 @@ def cluster_keywords(
         Dictionary mapping category name to list of keywords.
     """
     clustered = {category: [] for category in TECH_TAXONOMY}
-    clustered["other"] = []
+    clustered["general"] = []
 
     for keyword in keywords:
         keyword_lower = keyword.lower()
@@ -215,7 +334,7 @@ def cluster_keywords(
                 break
 
         if not assigned:
-            clustered["other"].append(keyword)
+            clustered["general"].append(keyword)
 
     return clustered
 
@@ -223,6 +342,7 @@ def cluster_keywords(
 def analyze_vacancies(
     vacancies_dir: str | Path,
     top_n: int = 100,
+    use_vacancy_base: bool = False,
 ) -> dict:
     """
     Analyze all vacancy files and extract keyword statistics.
@@ -230,6 +350,7 @@ def analyze_vacancies(
     Args:
         vacancies_dir: Path to directory containing vacancy files.
         top_n: Number of top keywords to return.
+        use_vacancy_base: Whether to include the vacancy base during extraction.
 
     Returns:
         Dictionary containing:
@@ -247,7 +368,11 @@ def analyze_vacancies(
     by_vacancy = {}
 
     for name, content in vacancies.items():
-        doc_keywords = extract_keywords_from_text(content, top_n=50)
+        doc_keywords = extract_keywords_from_text(
+            content,
+            top_n=50,
+            use_vacancy_base=use_vacancy_base,
+        )
         by_vacancy[name] = doc_keywords
 
         for keyword, score in doc_keywords:
@@ -279,12 +404,46 @@ def analyze_vacancies(
     }
 
 
+def serialize_keyword_report(report: dict) -> dict:
+    """
+    Convert keyword analysis output into JSON-serializable data.
+
+    Args:
+        report: Result from analyze_vacancies().
+
+    Returns:
+        Dictionary with keywords and scores as plain dicts/lists.
+    """
+    keywords = [
+        {"keyword": keyword, "score": float(score)}
+        for keyword, score in report.get("keywords", [])
+    ]
+
+    by_category = {
+        category: keywords_list
+        for category, keywords_list in report.get("by_category", {}).items()
+    }
+
+    by_vacancy = {}
+    for name, keywords_list in report.get("by_vacancy", {}).items():
+        by_vacancy[name] = [
+            {"keyword": keyword, "score": float(score)}
+            for keyword, score in keywords_list
+        ]
+
+    return {
+        "keywords": keywords,
+        "by_category": by_category,
+        "by_vacancy": by_vacancy,
+    }
+
+
 def get_category_keywords(category: str) -> list[str]:
     """
     Get predefined keywords for a category.
 
     Args:
-        category: Category name (mlops, nlp_llm, cloud_aws, data_engineering, classical_ml).
+        category: Category name (research_ml, applied_production, genai_llm).
 
     Returns:
         List of keywords for the category.
@@ -350,76 +509,63 @@ def match_job_to_categories(job_text: str) -> dict[str, float]:
 
 def get_resume_themes() -> dict[str, dict]:
     """
-    Get predefined resume themes for the 5 versions.
+    Get predefined resume themes for the 3 versions.
 
     Returns:
         Dictionary mapping theme name to theme configuration.
     """
     return {
-        "mlops": {
-            "name": "MLOps & Platform Engineering",
-            "primary_category": "mlops",
-            "secondary_categories": ["cloud_aws", "data_engineering"],
+        "research_ml": {
+            "name": "Research & Advanced ML",
+            "primary_category": "research_ml",
+            "secondary_categories": ["genai_llm", "applied_production"],
             "skills_priority": [
-                "Docker", "Kubernetes", "MLflow", "CI/CD", "model registry",
-                "model monitoring", "AWS Sagemaker", "Airflow",
+                "PyTorch", "TensorFlow", "Deep Learning", "Statistical Analysis",
+                "XGBoost", "CatBoost", "Neural Networks",
             ],
             "experience_keywords": [
-                "pipeline", "deployment", "production", "infrastructure",
-                "monitoring", "scalable", "reliable", "automated",
+                "neural network", "optimization", "experiments", "statistical",
+                "algorithms", "model performance", "research",
             ],
+            "summary_template": (
+                "ML Engineer with 6+ years experience in statistical modeling and deep learning. "
+                "Proficient in PyTorch, XGBoost, and neural network optimization."
+            ),
         },
-        "nlp_llm": {
-            "name": "NLP & LLM Engineering",
-            "primary_category": "nlp_llm",
-            "secondary_categories": ["classical_ml", "cloud_aws"],
+        "applied_production": {
+            "name": "Applied ML & Production Systems",
+            "primary_category": "applied_production",
+            "secondary_categories": ["research_ml", "genai_llm"],
             "skills_priority": [
-                "LangChain", "LangGraph", "LLM", "NLP", "Transformers",
-                "PyTorch", "Hugging Face", "RAG", "embeddings",
+                "Docker", "Kubernetes", "AWS Sagemaker", "MLflow", "Airflow",
+                "CI/CD", "Feature Engineering", "SQL",
             ],
             "experience_keywords": [
-                "LLM", "language model", "NLP", "chatbot", "text",
-                "prompt", "generation", "transformer",
+                "production", "pipeline", "deployment", "a/b testing",
+                "monitoring", "retraining", "infrastructure", "containerization",
+                "scaling",
             ],
+            "summary_template": (
+                "ML Engineer with 6+ years experience building production ML systems. "
+                "Expert in MLOps, Docker, Kubernetes, and end-to-end pipelines."
+            ),
         },
-        "cloud_aws": {
-            "name": "Cloud & AWS Infrastructure",
-            "primary_category": "cloud_aws",
-            "secondary_categories": ["mlops", "data_engineering"],
+        "genai_llm": {
+            "name": "Generative AI & LLM Engineering",
+            "primary_category": "genai_llm",
+            "secondary_categories": ["research_ml", "applied_production"],
             "skills_priority": [
-                "AWS", "Sagemaker", "EC2", "S3", "Bedrock", "Lambda",
-                "Docker", "Terraform", "cloud infrastructure",
+                "LangChain", "LangGraph", "RAG", "FastAPI", "Vector Databases",
+                "Embeddings", "Prompt Engineering", "REST APIs",
             ],
             "experience_keywords": [
-                "AWS", "cloud", "Sagemaker", "infrastructure", "scalable",
-                "serverless", "migration", "deployment",
+                "llm", "gpt", "agents", "prompts", "embeddings",
+                "retrieval", "generation", "telegram bot", "automated",
             ],
-        },
-        "data_engineering": {
-            "name": "Data Engineering & Pipelines",
-            "primary_category": "data_engineering",
-            "secondary_categories": ["classical_ml", "cloud_aws"],
-            "skills_priority": [
-                "Apache Airflow", "Apache Kafka", "Spark", "SQL",
-                "ClickHouse", "ETL", "data pipeline", "Snowflake",
-            ],
-            "experience_keywords": [
-                "pipeline", "data", "ETL", "processing", "Airflow",
-                "Kafka", "SQL", "warehouse", "quality",
-            ],
-        },
-        "classical_ml": {
-            "name": "Classical ML & Analytics",
-            "primary_category": "classical_ml",
-            "secondary_categories": ["data_engineering", "mlops"],
-            "skills_priority": [
-                "XGBoost", "CatBoost", "LightGBM", "scikit-learn",
-                "feature engineering", "A/B testing", "Prophet", "forecasting",
-            ],
-            "experience_keywords": [
-                "model", "prediction", "classification", "regression",
-                "feature", "performance", "evaluation", "optimization",
-            ],
+            "summary_template": (
+                "ML Engineer with 6+ years experience in LLM applications and generative AI. "
+                "Skilled in LangChain, RAG pipelines, and agentic systems."
+            ),
         },
     }
 
@@ -456,4 +602,3 @@ def find_best_theme_for_job(job_text: str) -> tuple[str, float]:
     best_score = theme_scores[best_theme]
 
     return best_theme, best_score
-

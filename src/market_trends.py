@@ -25,7 +25,7 @@ class TrendingSkill(BaseModel):
     """A skill with market demand metadata."""
 
     skill: str = Field(description="The skill name")
-    category: str = Field(description="Tech category: mlops, nlp_llm, cloud_aws, data_engineering, classical_ml")
+    category: str = Field(description="Tech category: research_ml, applied_production, genai_llm")
     demand_level: str = Field(description="Demand level: high, medium, low")
     trend: str = Field(description="Trend direction: rising, stable, declining")
 
@@ -170,18 +170,16 @@ Based on your knowledge of current job market trends, provide an analysis of:
 3. Brief market insights
 
 Focus on these categories:
-- mlops: MLOps, CI/CD, deployment, containerization
-- nlp_llm: NLP, LLMs, RAG, transformers
-- cloud_aws: Cloud platforms, AWS, infrastructure
-- data_engineering: Data pipelines, ETL, streaming
-- classical_ml: Traditional ML, statistics, A/B testing
+- research_ml: Deep learning, statistical rigor, model optimization
+- applied_production: MLOps, deployment, pipelines, monitoring
+- genai_llm: LLMs, RAG, agents, prompt engineering
 
 Provide realistic demand levels and trends."""
 
         user_prompt = f"""Analyze current job market trends for {role_focus} positions.
 
 Provide:
-1. 15-20 trending skills with their category (mlops/nlp_llm/cloud_aws/data_engineering/classical_ml), demand level (high/medium/low), and trend (rising/stable/declining)
+1. 15-20 trending skills with their category (research_ml/applied_production/genai_llm), demand level (high/medium/low), and trend (rising/stable/declining)
 2. 5-10 emerging technologies that are gaining demand
 3. A brief 2-3 sentence summary of current market conditions
 

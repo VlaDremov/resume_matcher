@@ -14,22 +14,18 @@ interface ScoreDisplayProps {
 
 // * Category display configuration
 const CATEGORY_CONFIG: Record<KeywordCategory, { label: string; color: string }> = {
-  mlops: { label: 'MLOps', color: '#8B5CF6' },
-  nlp_llm: { label: 'NLP & LLM', color: '#06B6D4' },
-  cloud_aws: { label: 'Cloud/AWS', color: '#F97316' },
-  data_engineering: { label: 'Data Eng', color: '#10B981' },
-  classical_ml: { label: 'Classical ML', color: '#EC4899' },
-  other: { label: 'Other', color: '#6B7280' },
+  research_ml: { label: 'Research ML', color: '#2563EB' },
+  applied_production: { label: 'Applied Prod', color: '#16A34A' },
+  genai_llm: { label: 'GenAI & LLM', color: '#F97316' },
+  general: { label: 'General', color: '#6B7280' },
 };
 
 // * All category keys in display order
 const CATEGORIES: KeywordCategory[] = [
-  'mlops',
-  'nlp_llm',
-  'cloud_aws',
-  'data_engineering',
-  'classical_ml',
-  'other',
+  'research_ml',
+  'applied_production',
+  'genai_llm',
+  'general',
 ];
 
 // * Count total keywords across all categories

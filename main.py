@@ -6,8 +6,8 @@ A tool to generate keyword-optimized resume variants and match them
 to job descriptions for improved ATS (Applicant Tracking System) compatibility.
 
 Usage:
-    python main.py generate          # Generate all 5 resume variants
-    python main.py match JOB_FILE    # Find best variant for a job
+    python main.py generate          # Generate all 3 resume variants
+    python main.py cluster-vacancies # Cluster vacancies into categories
     python main.py analyze           # Analyze keywords in vacancies
 """
 
@@ -66,14 +66,12 @@ def cli():
 )
 def generate(resume: str, output: str, compile_pdf: bool, use_gpt_rewrite: bool):
     """
-    Generate all 5 keyword-optimized resume variants.
+    Generate all 3 keyword-optimized resume variants.
 
     Creates resume variants focused on:
-    - MLOps & Platform Engineering
-    - NLP & LLM Engineering
-    - Cloud & AWS Infrastructure
-    - Data Engineering & Pipelines
-    - Classical ML & Analytics
+    - Research & Advanced ML
+    - Applied ML & Production Systems
+    - Generative AI & LLM Engineering
 
     Use --use-gpt-rewrite for genuinely different variants (recommended).
     """
@@ -142,123 +140,21 @@ def generate(resume: str, output: str, compile_pdf: bool, use_gpt_rewrite: bool)
 
             click.echo(f"\n✓ Compiled {success_count}/{len(generated)} PDFs")
 
+    if use_gpt_rewrite:
+        from src.llm_client import format_usage_summary, get_usage_summary
+
+        usage_summary = get_usage_summary()
+        click.echo()
+        click.echo("LLM usage summary:")
+        lines = format_usage_summary(usage_summary)
+        if lines:
+            for line in lines:
+                click.echo(line)
+        else:
+            click.echo("total_requests=0")
+
     click.echo()
     click.echo(f"Output files are in: {output_dir}")
-
-
-@cli.command()
-@click.argument("job_file", type=click.Path(exists=True), required=False)
-@click.option(
-    "--text",
-    "-t",
-    type=str,
-    default=None,
-    help="Job description text (alternative to file)",
-)
-@click.option(
-    "--variants",
-    "-v",
-    type=click.Path(exists=True),
-    default=str(DEFAULT_OUTPUT_DIR),
-    help="Directory containing resume variants",
-)
-@click.option(
-    "--explain/--no-explain",
-    default=False,
-    help="Show detailed match explanation",
-)
-@click.option(
-    "--all/--best",
-    "show_all",
-    default=False,
-    help="Show all variants ranked (not just the best)",
-)
-def match(job_file: str, text: str, variants: str, explain: bool, show_all: bool):
-    """
-    Match a job description to the best resume variant.
-
-    Provide either a JOB_FILE path or use --text for direct input.
-
-    Example:
-        python main.py match vacancies/asos.txt
-        python main.py match --text "Senior ML Engineer with MLOps..."
-    """
-    from src.matcher import ResumeMatcher, rank_all_variants
-
-    # * Get job description text
-    if job_file:
-        job_path = Path(job_file)
-        with open(job_path, "r", encoding="utf-8") as f:
-            job_text = f.read()
-        click.echo(f"Job description: {job_path.name}")
-    elif text:
-        job_text = text
-        click.echo("Job description: (provided via --text)")
-    else:
-        click.echo("Error: Provide either JOB_FILE or --text", err=True)
-        sys.exit(1)
-
-    variants_dir = Path(variants)
-
-    if not variants_dir.exists():
-        click.echo(f"Error: Variants directory not found: {variants_dir}", err=True)
-        click.echo("Run 'python main.py generate' first to create variants.")
-        sys.exit(1)
-
-    click.echo()
-
-    # * Perform matching
-    matcher = ResumeMatcher(variants_dir)
-
-    if not matcher.variants:
-        click.echo("Error: No resume variants found.", err=True)
-        click.echo("Run 'python main.py generate' first to create variants.")
-        sys.exit(1)
-
-    result = matcher.match(job_text)
-
-    # * Display results
-    if show_all:
-        click.echo("All variants ranked by match score:")
-        click.echo("-" * 50)
-
-        ranked = rank_all_variants(job_text, variants_dir)
-        for i, item in enumerate(ranked, 1):
-            score_bar = "█" * int(item["score"] * 20)
-            variant_display = item["variant"].replace("_", " ").title()
-
-            click.echo(f"{i}. {variant_display:25} {score_bar:20} {item['score']:.3f}")
-
-            if item["pdf_path"]:
-                click.echo(f"   PDF: {item['pdf_path']}")
-
-        click.echo()
-    else:
-        best = result["best_variant"]
-        confidence = result["confidence"]
-
-        click.echo("═" * 50)
-        click.echo(f"  BEST MATCH: {best.replace('_', ' ').title()}")
-        click.echo(f"  Confidence: {confidence:.1%}")
-        click.echo("═" * 50)
-
-        # * Show file paths
-        tex_path = matcher.get_variant_path(best, "tex")
-        pdf_path = matcher.get_variant_path(best, "pdf")
-
-        click.echo()
-        if tex_path:
-            click.echo(f"  LaTeX: {tex_path}")
-        if pdf_path:
-            click.echo(f"  PDF:   {pdf_path}")
-
-    # * Show explanation if requested
-    if explain:
-        click.echo()
-        click.echo("Match Explanation:")
-        click.echo("-" * 50)
-        explanation = matcher.explain_match(job_text, result["best_variant"])
-        click.echo(explanation)
 
 
 @cli.command()
@@ -276,14 +172,23 @@ def match(job_file: str, text: str, variants: str, explain: bool, show_all: bool
     default=30,
     help="Number of top keywords to show",
 )
-def analyze(vacancies: str, top: int):
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    default=None,
+    help="Optional path to save keyword report as JSON",
+)
+def analyze(vacancies: str, top: int, output: str | None):
     """
     Analyze keywords from job descriptions in the vacancies folder.
 
     Shows keyword frequency and categorization to help understand
-    what skills are most in demand.
+    what skills are most in demand. Use --output to save JSON for reuse.
     """
-    from src.keyword_engine import analyze_vacancies
+    import json
+
+    from src.keyword_engine import analyze_vacancies, serialize_keyword_report
 
     vacancies_dir = Path(vacancies)
 
@@ -295,6 +200,15 @@ def analyze(vacancies: str, top: int):
     if not result["keywords"]:
         click.echo("No keywords found. Check that vacancy files contain text.")
         return
+
+    if output:
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = serialize_keyword_report(result)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        click.echo(f"Saved keyword report to: {output_path}")
+        click.echo()
 
     # * Show top keywords
     click.echo(f"Top {top} Keywords:")
@@ -316,6 +230,124 @@ def analyze(vacancies: str, top: int):
             click.echo(f"  {', '.join(keywords[:15])}")
             if len(keywords) > 15:
                 click.echo(f"  ... and {len(keywords) - 15} more")
+
+
+@cli.command("cluster-vacancies")
+@click.option(
+    "--vacancies",
+    "-d",
+    type=click.Path(exists=True),
+    default=str(DEFAULT_VACANCIES_DIR),
+    help="Directory containing vacancy files",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    default=None,
+    help="Save JSON to file",
+)
+@click.option(
+    "--clusters",
+    "-n",
+    type=int,
+    default=3,
+    help="Number of clusters",
+)
+@click.option(
+    "--gpt/--no-gpt",
+    "use_gpt",
+    default=True,
+    help="Use GPT for enhancement",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show detailed output",
+)
+def cluster_vacancies(
+    vacancies: str,
+    output: str | None,
+    clusters: int,
+    use_gpt: bool,
+    verbose: bool,
+):
+    """Analyze and cluster all vacancies by keyword similarity."""
+    import json
+
+    from src.vacancy_clustering import VacancyClusteringPipeline
+
+    vacancies_dir = Path(vacancies)
+    pipeline = VacancyClusteringPipeline(vacancies_dir=vacancies_dir, use_gpt=use_gpt)
+
+    click.echo(f"Clustering vacancies in: {vacancies_dir}")
+    result = pipeline.cluster(num_clusters=clusters)
+
+    stats = result.pipeline_stats or {}
+    click.echo()
+    click.echo(f"Clustering {result.total_vacancies} vacancies into {len(result.clusters)} categories...")
+    click.echo()
+
+    if stats:
+        gpt_used = bool(stats.get("gpt_used"))
+        click.echo(
+            f"Stage 1: Extracting keywords (TF-IDF + taxonomy)... \u2713 {stats.get('raw_keywords', 0)} unique keywords"
+        )
+        if gpt_used:
+            click.echo(
+                f"Stage 2: Enhancing with GPT... \u2713 Categorized {stats.get('raw_keywords', 0)} \u2192 {stats.get('gpt_categorized', 0)} canonical keywords"
+            )
+        elif use_gpt:
+            click.echo("Stage 2: Enhancing with GPT... skipped (no API key)")
+        else:
+            click.echo("Stage 2: Enhancing with GPT... skipped (--no-gpt)")
+        click.echo(
+            f"Stage 3: Clustering by embeddings... \u2713 Merged to {stats.get('embedding_merged', 0)} keyword groups"
+        )
+        click.echo("Stage 4: Assigning vacancies... \u2713")
+
+    def format_keyword_list(items: list[str], counts: dict[str, int], limit: int = 6) -> str:
+        if not items:
+            return "None"
+        parts = []
+        for keyword in items[:limit]:
+            parts.append(f"{keyword} ({counts.get(keyword, 0)})")
+        return ", ".join(parts)
+
+    for cluster_key, cluster in result.clusters.items():
+        click.echo()
+        click.echo("═" * 63)
+        click.echo(f"CLUSTER: {cluster_key} ({len(cluster.vacancies)} vacancies)")
+        click.echo("─" * 63)
+
+        vacancies_list = ", ".join(cluster.vacancies[:10])
+        if len(cluster.vacancies) > 10:
+            vacancies_list += "..."
+        click.echo(f"Vacancies: {vacancies_list or 'None'}")
+
+        click.echo(
+            f"Technologies: {format_keyword_list(cluster.defining_technologies, cluster.keyword_counts)}"
+        )
+        click.echo(
+            f"Skills: {format_keyword_list(cluster.defining_skills, cluster.keyword_counts)}"
+        )
+        click.echo(f"Top Keywords: {', '.join(cluster.top_keywords[:8]) or 'None'}")
+
+        if verbose and cluster.keyword_counts:
+            top_counts = ", ".join(
+                f"{kw} ({count})"
+                for kw, count in sorted(cluster.keyword_counts.items(), key=lambda x: -x[1])[:10]
+            )
+            click.echo(f"Keyword Counts: {top_counts}")
+
+    if output:
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(result.model_dump(), f, indent=2)
+        click.echo()
+        click.echo(f"Saved clustering report to: {output_path}")
 
 
 @cli.command()
@@ -424,7 +456,7 @@ def scrape(url: str, cookies: str, save_cookies: str):
     Example:
         python main.py scrape https://www.linkedin.com/in/username/
     """
-    from src.linkedin_scraper import scrape_linkedin_profile
+    from deprecated.linkedin_scraper import scrape_linkedin_profile
 
     click.echo("! Warning: Scraping LinkedIn violates their Terms of Service.")
     click.echo("  Consider using LinkedIn's PDF export feature instead.")
@@ -643,4 +675,3 @@ def serve(host: str, port: int, reload: bool):
 
 if __name__ == "__main__":
     cli()
-

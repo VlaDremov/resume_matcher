@@ -12,12 +12,10 @@ export interface CategoryScore {
 
 // * Keyword category type
 export type KeywordCategory =
-  | 'mlops'
-  | 'nlp_llm'
-  | 'cloud_aws'
-  | 'data_engineering'
-  | 'classical_ml'
-  | 'other';
+  | 'research_ml'
+  | 'applied_production'
+  | 'genai_llm'
+  | 'general';
 
 // * Keyword importance level
 export type KeywordImportance = 'critical' | 'important' | 'nice_to_have';
@@ -34,12 +32,10 @@ export interface KeywordWithMetadata {
 
 // * Keywords grouped by tech category
 export interface CategorizedKeywords {
-  mlops: KeywordWithMetadata[];
-  nlp_llm: KeywordWithMetadata[];
-  cloud_aws: KeywordWithMetadata[];
-  data_engineering: KeywordWithMetadata[];
-  classical_ml: KeywordWithMetadata[];
-  other: KeywordWithMetadata[];
+  research_ml: KeywordWithMetadata[];
+  applied_production: KeywordWithMetadata[];
+  genai_llm: KeywordWithMetadata[];
+  general: KeywordWithMetadata[];
 }
 
 // * Market trends types

@@ -113,8 +113,9 @@ Job Description Input
    - Services instantiate expensive modules (SemanticMatcher, KeywordExtractor) only on first use
    - Reduces startup time and memory footprint
 
-3. **Embedding Caching**
-   - Resume variant embeddings cached as JSON (`.hybrid_embeddings_cache.json`)
+3. **Caching**
+   - Resume variant embeddings: `.hybrid_embeddings_cache.json`
+   - Market trends data: `output/.market_trends_cache.json`
    - Speeds up subsequent analyses by ~10x
    - Cache invalidated if variant files change
 
@@ -158,6 +159,7 @@ Job Description Input
 - `src/llm_client.py` - OpenAI API wrapper with retries, structured JSON, token logging
 - `src/data_extraction.py` - LaTeX/PDF parsers
 - `src/latex_compiler.py` - pdflatex wrapper
+- `src/market_trends.py` - Job market trend analysis with GPT + caching
 
 **Backend Services:**
 - `backend/services.py` - Three service singletons:
@@ -208,49 +210,10 @@ USE_GPT_KEYWORDS=true  # Enable/disable GPT keyword extraction
 
 ### Model Specifications
 
-- Chat: `gpt-5-mini` (with `reasoning_effort: low`)
+- Chat: `gpt-5-mini` (with `reasoning_effort: minimal`)
 - Embedding: `text-embedding-3-small`
 - Local embedding: `all-MiniLM-L6-v2` (Sentence Transformers)
 - NER: `en_core_web_sm` (spaCy)
-
-## File Structure
-
-```
-resume_matcher/
-├── main.py                      # CLI entry point
-├── resume.tex                   # Original resume (LaTeX)
-├── .env                         # API keys & config
-├── requirements.txt             # Python dependencies
-│
-├── src/                         # Core logic
-│   ├── semantic_matcher.py      # Hybrid semantic matching
-│   ├── hybrid_embeddings.py     # Local + OpenAI embeddings (async)
-│   ├── hybrid_keywords.py       # Local + GPT keywords (async)
-│   ├── keyword_engine.py        # TF-IDF + taxonomy baseline
-│   ├── resume_generator.py      # LaTeX variant generation
-│   ├── bullet_rewriter.py       # GPT-5 bullet optimization
-│   ├── llm_client.py            # OpenAI API wrapper
-│   ├── local_embeddings.py      # Sentence Transformers
-│   ├── data_extraction.py       # PDF/LaTeX parsing
-│   ├── latex_compiler.py        # pdflatex wrapper
-│   ├── matcher.py               # Legacy keyword-based matching
-│   └── linkedin_scraper.py      # LinkedIn scraping (optional)
-│
-├── backend/                     # FastAPI REST API
-│   ├── api.py                   # Endpoints + CORS
-│   ├── services.py              # Business logic (lazy loading)
-│   └── schemas.py               # Pydantic models
-│
-├── frontend/                    # React + TypeScript
-│   ├── src/
-│   │   ├── App.tsx              # Main component
-│   │   └── api.ts               # Fetch-based API client
-│   └── package.json
-│
-├── output/                      # Generated variants (LaTeX + PDF)
-├── vacancies/                   # Job description files
-└── .gitignore                   # Excludes __pycache__, node_modules, cache
-```
 
 ## Important Implementation Notes
 
@@ -290,19 +253,11 @@ resume_matcher/
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `POST /api/analyze` | POST | Analyze job, return best variant + keywords |
-| `POST /api/save-vacancy` | POST | Save job description to `vacancies/` |
-| `GET /api/vacancies` | GET | List saved vacancies |
-| `GET /api/variants` | GET | List resume variants |
-| `GET /api/resume/{variant}/pdf` | GET | Download variant PDF |
-| `GET /api/resume/{variant}/tex` | GET | Download variant LaTeX |
-
-## Testing
-
-Currently no automated tests. When adding tests:
-- Use `pytest` for Python tests
-- Test async functions with `pytest-asyncio`
-- Mock OpenAI API calls to avoid costs
-- Focus on: keyword extraction, embedding caching, variant generation
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/analyze` | Analyze job, return best variant + keywords |
+| `POST /api/save-vacancy` | Save job description to `vacancies/` |
+| `GET /api/vacancies` | List saved vacancies |
+| `GET /api/variants` | List resume variants |
+| `GET /api/resume/{variant}/pdf` | Download variant PDF |
+| `GET /api/resume/{variant}/tex` | Download variant LaTeX |

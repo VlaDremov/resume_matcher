@@ -1,8 +1,8 @@
 """
 Resume Variant Generator.
 
-Generates 5 keyword-optimized LaTeX resume versions based on
-different focus areas (MLOps, NLP/LLM, Cloud, Data Engineering, Classical ML).
+Generates 3 keyword-optimized LaTeX resume versions based on
+different focus areas (Research ML, Applied Production, GenAI/LLM).
 
 Supports two modes:
 - Basic: Reorder bullets and skills (fast, no API calls)
@@ -26,7 +26,7 @@ def generate_all_variants(
     output_dir: str | Path,
 ) -> dict[str, Path]:
     """
-    Generate all 5 resume variants from a source LaTeX file.
+    Generate all 3 resume variants from a source LaTeX file.
 
     Args:
         source_resume_path: Path to the source resume.tex file.
@@ -113,7 +113,7 @@ def _reorder_skills_section(content: str, theme_config: dict) -> str:
     """
     # * Find the Technical Skills section
     skills_pattern = re.compile(
-        r"(\\section\{Technical Skills\}.*?\\begin\{itemize\}.*?\\small\{\\item\{)(.*?)(\\end\{itemize\})",
+        r"(\\section\{Technical Skills\}.*?\\begin\{itemize\}.*?\\small\{\\item\{)(.*?)(\\}\\}\\s*\\end\{itemize\})",
         re.DOTALL,
     )
 
@@ -144,7 +144,7 @@ def _reorder_skills_section(content: str, theme_config: dict) -> str:
     priority_skills = [s.lower() for s in theme_config.get("skills_priority", [])]
 
     for cat_name, cat_skills in categories.items():
-        skills_list = [s.strip() for s in cat_skills.split(",")]
+        skills_list = _split_skills_list(cat_skills)
 
         # * Sort: priority skills first, then alphabetically
         def skill_sort_key(skill):
@@ -174,9 +174,40 @@ def _reorder_skills_section(content: str, theme_config: dict) -> str:
 
     # * Replace in content
     new_section = prefix + new_skills_content + suffix
-    content = skills_pattern.sub(new_section.replace("\\", "\\\\"), content, count=1)
+    content = skills_pattern.sub(lambda _: new_section, content, count=1)
 
     return content
+
+
+def _split_skills_list(skills_text: str) -> list[str]:
+    """
+    Split a comma-separated skill list, preserving commas inside parentheses.
+    """
+    skills = []
+    current = []
+    paren_depth = 0
+
+    for ch in skills_text:
+        if ch == "(":
+            paren_depth += 1
+        elif ch == ")":
+            if paren_depth > 0:
+                paren_depth -= 1
+
+        if ch == "," and paren_depth == 0:
+            item = "".join(current).strip()
+            if item:
+                skills.append(item)
+            current = []
+            continue
+
+        current.append(ch)
+
+    tail = "".join(current).strip()
+    if tail:
+        skills.append(tail)
+
+    return skills
 
 
 def _get_category_order_for_theme(theme_config: dict, available_categories: list[str]) -> list[str]:
@@ -195,11 +226,9 @@ def _get_category_order_for_theme(theme_config: dict, available_categories: list
 
     # * Define preferred order for each theme
     order_preferences = {
-        "mlops": ["Frameworks and Libraries", "Developer Tools", "Cloud Platforms", "Languages"],
-        "nlp_llm": ["Frameworks and Libraries", "Languages", "Cloud Platforms", "Developer Tools"],
-        "cloud_aws": ["Cloud Platforms", "Developer Tools", "Frameworks and Libraries", "Languages"],
-        "data_engineering": ["Developer Tools", "Languages", "Cloud Platforms", "Frameworks and Libraries"],
-        "classical_ml": ["Frameworks and Libraries", "Languages", "Cloud Platforms", "Developer Tools"],
+        "research_ml": ["Frameworks and Libraries", "Languages", "Developer Tools", "Cloud Platforms"],
+        "applied_production": ["Developer Tools", "Cloud Platforms", "Frameworks and Libraries", "Languages"],
+        "genai_llm": ["Frameworks and Libraries", "Languages", "Developer Tools", "Cloud Platforms"],
     }
 
     preferred = order_preferences.get(theme_primary, [])
@@ -316,21 +345,8 @@ def _enhance_summary(content: str, theme_config: dict) -> str:
     Returns:
         Modified LaTeX content.
     """
-    theme_name = theme_config.get("name", "")
-    primary_category = theme_config.get("primary_category", "")
-
-    # * Define summary enhancements for each theme
-    summary_additions = {
-        "mlops": "Experienced in building and deploying production ML systems with robust CI/CD pipelines. ",
-        "nlp_llm": "Specialized in NLP and Large Language Model applications, including RAG systems and conversational AI. ",
-        "cloud_aws": "Expert in cloud-native ML solutions with extensive AWS experience including Sagemaker and Bedrock. ",
-        "data_engineering": "Strong background in data engineering, ETL pipelines, and distributed data processing. ",
-        "classical_ml": "Proficient in classical machine learning with focus on model performance optimization and A/B testing. ",
-    }
-
-    addition = summary_additions.get(primary_category, "")
-
-    if not addition:
+    summary_template = theme_config.get("summary_template", "")
+    if not summary_template:
         return content
 
     # * Find the summary (text after \end{center} and before first \section)
@@ -344,13 +360,14 @@ def _enhance_summary(content: str, theme_config: dict) -> str:
         prefix = match.group(1)
         existing_summary = match.group(2)
 
-        # * Insert addition at appropriate point in summary
-        # * Find a good insertion point (after first sentence or role description)
-        insertion_point = existing_summary.find(". ")
-        if insertion_point > 0:
-            new_summary = existing_summary[:insertion_point + 2] + addition + existing_summary[insertion_point + 2:]
-        else:
-            new_summary = existing_summary + " " + addition
+        template_text = summary_template
+        if "ML Engineer" in template_text:
+            template_text = template_text.replace(
+                "ML Engineer",
+                r"\textbf{ML Engineer}",
+                1,
+            )
+        new_summary = template_text
 
         content = content.replace(
             prefix + existing_summary,
@@ -446,7 +463,7 @@ async def generate_all_variants_with_gpt_async(
     output_dir: str | Path,
 ) -> dict[str, Path]:
     """
-    Generate all 5 resume variants with GPT-powered content rewriting (async).
+    Generate all 3 resume variants with GPT-powered content rewriting (async).
 
     This creates genuinely different variants by rewriting bullet points
     and summaries for each theme, rather than just reordering.
@@ -556,7 +573,7 @@ def generate_all_variants_with_gpt(
     output_dir: str | Path,
 ) -> dict[str, Path]:
     """
-    Generate all 5 resume variants with GPT-powered content rewriting (sync).
+    Generate all 3 resume variants with GPT-powered content rewriting (sync).
 
     Wrapper for async version.
 
@@ -570,4 +587,3 @@ def generate_all_variants_with_gpt(
     return asyncio.run(
         generate_all_variants_with_gpt_async(source_resume_path, output_dir)
     )
-

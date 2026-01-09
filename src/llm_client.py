@@ -11,7 +11,9 @@ Provides a wrapper for OpenAI API with support for:
 import asyncio
 import logging
 import os
+import re
 import time
+from dataclasses import dataclass
 from typing import Optional, Type, TypeVar, Union
 
 from openai import AsyncOpenAI, OpenAI
@@ -22,6 +24,7 @@ from pydantic import BaseModel
 # * Supported models: gpt-4o-mini, gpt-4o-2024-08-06, gpt-5-mini, and later models
 DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_REASONING_EFFORT = "minimal"
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 
@@ -29,6 +32,222 @@ RETRY_DELAY = 1.0
 T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger("resume_matcher.llm")
+
+
+def _normalize_model_key(model: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", model).upper()
+
+
+def _read_float_env(key: str) -> Optional[float]:
+    raw = os.getenv(key)
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid numeric value for %s=%r", key, raw)
+        return None
+
+
+def _pricing_env_keys(model: str) -> tuple[str, str]:
+    model_key = _normalize_model_key(model)
+    return (
+        f"OPENAI_PRICE_{model_key}_INPUT_PER_1M",
+        f"OPENAI_PRICE_{model_key}_OUTPUT_PER_1M",
+    )
+
+
+def _get_pricing_for_model(model: str) -> tuple[Optional[float], Optional[float]]:
+    model_input_key, model_output_key = _pricing_env_keys(model)
+    input_price = _read_float_env(model_input_key)
+    output_price = _read_float_env(model_output_key)
+    if input_price is None:
+        input_price = _read_float_env("OPENAI_PRICE_INPUT_PER_1M")
+    if output_price is None:
+        output_price = _read_float_env("OPENAI_PRICE_OUTPUT_PER_1M")
+    return input_price, output_price
+
+
+def _default_reasoning_effort() -> Optional[str]:
+    raw = os.getenv("OPENAI_REASONING_EFFORT", DEFAULT_REASONING_EFFORT)
+    if raw is None:
+        return None
+    raw = raw.strip().lower()
+    if raw in ("", "none", "off", "false", "0"):
+        return None
+    return raw
+
+
+@dataclass
+class UsageAccumulator:
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cached_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+    price_input_per_1m: Optional[float] = None
+    price_output_per_1m: Optional[float] = None
+
+
+class LLMUsageTracker:
+    def __init__(self) -> None:
+        self.by_model: dict[str, UsageAccumulator] = {}
+        self.pricing_missing_models: set[str] = set()
+
+    def _normalize_usage(self, usage) -> Optional[dict]:
+        if usage is None:
+            return None
+
+        input_tokens = getattr(usage, "input_tokens", None)
+        if input_tokens is None:
+            input_tokens = getattr(usage, "prompt_tokens", None)
+
+        output_tokens = getattr(usage, "output_tokens", None)
+        if output_tokens is None:
+            output_tokens = getattr(usage, "completion_tokens", None)
+        if output_tokens is None:
+            output_tokens = 0
+
+        total_tokens = getattr(usage, "total_tokens", None)
+        if total_tokens is None and input_tokens is not None:
+            total_tokens = input_tokens + output_tokens
+
+        if input_tokens is None or total_tokens is None:
+            return None
+
+        reasoning_tokens = 0
+        output_details = getattr(usage, "output_tokens_details", None)
+        if output_details is not None:
+            reasoning_tokens = getattr(output_details, "reasoning_tokens", 0) or 0
+
+        cached_tokens = 0
+        input_details = getattr(usage, "input_tokens_details", None)
+        if input_details is not None:
+            cached_tokens = getattr(input_details, "cached_tokens", 0) or 0
+
+        return {
+            "input_tokens": int(input_tokens),
+            "output_tokens": int(output_tokens),
+            "total_tokens": int(total_tokens),
+            "reasoning_tokens": int(reasoning_tokens),
+            "cached_tokens": int(cached_tokens),
+        }
+
+    def record_usage(self, model: str, usage) -> Optional[dict]:
+        usage_info = self._normalize_usage(usage)
+        if usage_info is None:
+            return None
+
+        input_tokens = usage_info["input_tokens"]
+        output_tokens = usage_info["output_tokens"]
+        total_tokens = usage_info["total_tokens"]
+        reasoning_tokens = usage_info["reasoning_tokens"]
+        cached_tokens = usage_info["cached_tokens"]
+
+        input_price, output_price = _get_pricing_for_model(model)
+        cost_usd = 0.0
+        if input_price is not None:
+            cost_usd += (input_tokens / 1_000_000) * input_price
+        if output_price is not None:
+            cost_usd += (output_tokens / 1_000_000) * output_price
+
+        missing_pricing = False
+        if input_tokens > 0 and input_price is None:
+            missing_pricing = True
+        if output_tokens > 0 and output_price is None:
+            missing_pricing = True
+        if missing_pricing:
+            self.pricing_missing_models.add(model)
+
+        acc = self.by_model.setdefault(model, UsageAccumulator())
+        acc.requests += 1
+        acc.input_tokens += input_tokens
+        acc.output_tokens += output_tokens
+        acc.total_tokens += total_tokens
+        acc.reasoning_tokens += reasoning_tokens
+        acc.cached_tokens += cached_tokens
+        acc.cost_usd += cost_usd
+        if input_price is not None:
+            acc.price_input_per_1m = input_price
+        if output_price is not None:
+            acc.price_output_per_1m = output_price
+
+        return {
+            **usage_info,
+            "cost_usd": cost_usd,
+            "pricing_missing": missing_pricing,
+            "price_input_per_1m": input_price,
+            "price_output_per_1m": output_price,
+        }
+
+    def summary(self) -> dict:
+        totals = UsageAccumulator()
+        by_model_summary: dict[str, dict] = {}
+
+        for model, acc in self.by_model.items():
+            totals.requests += acc.requests
+            totals.input_tokens += acc.input_tokens
+            totals.output_tokens += acc.output_tokens
+            totals.total_tokens += acc.total_tokens
+            totals.reasoning_tokens += acc.reasoning_tokens
+            totals.cached_tokens += acc.cached_tokens
+            totals.cost_usd += acc.cost_usd
+
+            by_model_summary[model] = {
+                "requests": acc.requests,
+                "input_tokens": acc.input_tokens,
+                "output_tokens": acc.output_tokens,
+                "total_tokens": acc.total_tokens,
+                "reasoning_tokens": acc.reasoning_tokens,
+                "cached_tokens": acc.cached_tokens,
+                "cost_usd": acc.cost_usd,
+                "price_input_per_1m": acc.price_input_per_1m,
+                "price_output_per_1m": acc.price_output_per_1m,
+            }
+
+        return {
+            "total_requests": totals.requests,
+            "total_input_tokens": totals.input_tokens,
+            "total_output_tokens": totals.output_tokens,
+            "total_tokens": totals.total_tokens,
+            "total_reasoning_tokens": totals.reasoning_tokens,
+            "total_cached_tokens": totals.cached_tokens,
+            "total_cost_usd": totals.cost_usd,
+            "by_model": by_model_summary,
+            "pricing_missing_models": sorted(self.pricing_missing_models),
+        }
+
+
+USAGE_TRACKER = LLMUsageTracker()
+
+
+def _format_usage_for_log(usage_info: Optional[dict]) -> str:
+    if not usage_info:
+        return ""
+
+    parts = [
+        f" input={usage_info['input_tokens']}",
+        f" output={usage_info['output_tokens']}",
+        f" total={usage_info['total_tokens']}",
+    ]
+
+    if usage_info.get("reasoning_tokens"):
+        parts.append(f" reasoning={usage_info['reasoning_tokens']}")
+    if usage_info.get("cached_tokens"):
+        parts.append(f" cached={usage_info['cached_tokens']}")
+
+    cost_usd = usage_info.get("cost_usd")
+    if cost_usd is not None:
+        parts.append(f" cost=${cost_usd:.6f}")
+        if usage_info.get("pricing_missing"):
+            parts.append(" pricing_missing=True")
+
+    return "".join(parts)
 
 
 class LLMClient:
@@ -47,6 +266,7 @@ class LLMClient:
         api_key: Optional[str] = None,
         model: str = DEFAULT_MODEL,
         embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+        reasoning_effort: Optional[str] = None,
     ):
         """
         Initialize the LLM client.
@@ -56,6 +276,7 @@ class LLMClient:
             model: Model to use for structured outputs (default: gpt-4o-2024-08-06).
                   Must support Structured Outputs (gpt-4o-mini, gpt-4o-2024-08-06+).
             embedding_model: Model to use for embeddings.
+            reasoning_effort: Reasoning effort for gpt-5/o-series models.
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
 
@@ -70,6 +291,79 @@ class LLMClient:
         self.async_client = AsyncOpenAI(api_key=self.api_key)
         self.model = model
         self.embedding_model = embedding_model
+        self.reasoning_effort = reasoning_effort if reasoning_effort is not None else _default_reasoning_effort()
+        self.usage_tracker = USAGE_TRACKER
+
+    def _supports_reasoning_effort(self, model: Optional[str] = None) -> bool:
+        model_name = (model or self.model or "").lower()
+        if model_name.startswith("gpt-5"):
+            return True
+        return re.match(r"^o\d", model_name) is not None
+
+    def _build_response_kwargs(
+        self,
+        messages: list[dict],
+        response_model: Type[T],
+        temperature: Optional[float],
+    ) -> dict:
+        kwargs = {
+            "model": self.model,
+            "input": messages,
+            "text_format": response_model,
+            "temperature": temperature,
+        }
+        if self.reasoning_effort and self._supports_reasoning_effort():
+            kwargs["reasoning"] = {"effort": self.reasoning_effort}
+        return kwargs
+
+    def _record_usage_from_response(self, response) -> Optional[dict]:
+        usage = getattr(response, "usage", None)
+        model = getattr(response, "model", self.model)
+        return self.usage_tracker.record_usage(model, usage)
+
+    def _record_usage_from_embedding(self, response) -> Optional[dict]:
+        usage = getattr(response, "usage", None)
+        model = getattr(response, "model", self.embedding_model)
+        return self.usage_tracker.record_usage(model, usage)
+
+    def _extract_refusal(self, response) -> Optional[str]:
+        output_items = getattr(response, "output", None) or []
+        for item in output_items:
+            if getattr(item, "type", None) == "message":
+                refusal = getattr(item, "refusal", None)
+                if refusal:
+                    return refusal
+                content_items = getattr(item, "content", None) or []
+                for content in content_items:
+                    refusal = getattr(content, "refusal", None)
+                    if refusal:
+                        return refusal
+        return None
+
+    def _log_response_structure_error(self, response, usage_info: Optional[dict]) -> None:
+        output_items = getattr(response, "output", None) or []
+        output_types = [getattr(item, "type", None) for item in output_items]
+        message_content_types = []
+        for item in output_items:
+            if getattr(item, "type", None) == "message":
+                content_items = getattr(item, "content", None) or []
+                message_content_types.append(
+                    [getattr(content, "type", None) for content in content_items]
+                )
+
+        output_text = getattr(response, "output_text", "") or ""
+
+        logger.error(
+            "Response structure error: status=%s error=%s incomplete=%s output_types=%s "
+            "message_content_types=%s output_text_len=%s%s",
+            getattr(response, "status", None),
+            getattr(response, "error", None),
+            getattr(response, "incomplete_details", None),
+            output_types,
+            message_content_types,
+            len(output_text),
+            _format_usage_for_log(usage_info),
+        )
 
     def chat_structured(
         self,
@@ -103,60 +397,36 @@ class LLMClient:
                 # * Use Responses API parse() method for structured outputs with Pydantic models
                 # * responses.parse() is specifically designed for structured outputs
                 response = self.client.responses.parse(
-                    model=self.model,
-                    input=messages,
-                    text_format=response_model,
-                    temperature=temperature,
+                    **self._build_response_kwargs(messages, response_model, temperature)
                 )
                 duration = time.perf_counter() - start
+                usage_info = self._record_usage_from_response(response)
 
-                # * Responses API parse() returns structured output in response.output[0].content[0].parsed
-                # * Check response structure with proper None handling
-                if not hasattr(response, "output") or not response.output:
-                    raise ValueError("Responses API returned no output")
-                
-                if len(response.output) == 0:
-                    raise ValueError("Responses API returned empty output array")
-                
-                message = response.output[0]
-                
-                # * Check if content exists and is not None
-                if not hasattr(message, "content") or message.content is None:
-                    # * Check for refusal message
-                    refusal = getattr(message, "refusal", None)
-                    if refusal:
-                        raise ValueError(f"Model refused: {refusal}")
-                    raise ValueError("Responses API returned no content (content is None)")
-                
-                if len(message.content) == 0:
-                    raise ValueError("Responses API returned empty content array")
-                
-                text = message.content[0]
-                
-                if hasattr(text, "parsed") and text.parsed is not None:
-                    usage = getattr(response, "usage", None)
-                    token_summary = ""
-                    if usage:
-                        prompt_tokens = getattr(usage, "prompt_tokens", None)
-                        completion_tokens = getattr(usage, "completion_tokens", None)
-                        total_tokens = getattr(usage, "total_tokens", None)
-                        token_summary = (
-                            f" prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}"
-                        )
-                    
+                model_name = getattr(response, "model", self.model)
+                parsed = getattr(response, "output_parsed", None)
+                if parsed is not None:
                     logger.info(
                         "LLM structured success model=%s duration=%.3fs%s",
-                        self.model,
+                        model_name,
                         duration,
-                        token_summary,
+                        _format_usage_for_log(usage_info),
                     )
-                    return text.parsed
-                else:
-                    # * Check for refusal message
-                    refusal = getattr(text, "refusal", None)
-                    if refusal:
-                        raise ValueError(f"Model refused: {refusal}")
-                    raise ValueError("Responses API returned no parsed output")
+                    return parsed
+
+                refusal = self._extract_refusal(response)
+                if refusal:
+                    raise ValueError(f"Model refused: {refusal}")
+
+                if getattr(response, "error", None) is not None:
+                    self._log_response_structure_error(response, usage_info)
+                    raise ValueError(f"Responses API error: {response.error}")
+
+                if getattr(response, "incomplete_details", None) is not None:
+                    self._log_response_structure_error(response, usage_info)
+                    raise ValueError(f"Responses API incomplete: {response.incomplete_details}")
+
+                self._log_response_structure_error(response, usage_info)
+                raise ValueError("Responses API returned no parsed output")
 
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
@@ -207,68 +477,36 @@ class LLMClient:
                 # * Use Responses API parse() method for structured outputs with Pydantic models
                 # * responses.parse() is specifically designed for structured outputs
                 response = await self.async_client.responses.parse(
-                    model=self.model,
-                    input=messages,
-                    text_format=response_model,
-                    temperature=temperature,
+                    **self._build_response_kwargs(messages, response_model, temperature)
                 )
                 duration = time.perf_counter() - start
+                usage_info = self._record_usage_from_response(response)
 
-                # * Responses API parse() returns structured output in response.output[0].content[0].parsed
-                # * Check response structure with proper None handling
-                if not hasattr(response, "output") or not response.output:
-                    logger.error("Response structure: has output=%s", hasattr(response, "output"))
-                    raise ValueError("Responses API returned no output")
-                
-                if len(response.output) == 0:
-                    raise ValueError("Responses API returned empty output array")
-                
-                message = response.output[0]
-                
-                # * Check if content exists and is not None
-                if not hasattr(message, "content") or message.content is None:
-                    # * Log response structure for debugging
-                    logger.error(
-                        "Response structure error: message.type=%s, has content=%s, content=%s",
-                        getattr(message, "type", None),
-                        hasattr(message, "content"),
-                        message.content if hasattr(message, "content") else "N/A",
-                    )
-                    # * Check for refusal message
-                    refusal = getattr(message, "refusal", None)
-                    if refusal:
-                        raise ValueError(f"Model refused: {refusal}")
-                    raise ValueError("Responses API returned no content (content is None)")
-                
-                if len(message.content) == 0:
-                    raise ValueError("Responses API returned empty content array")
-                
-                text = message.content[0]
-                
-                if hasattr(text, "parsed") and text.parsed is not None:
-                    usage = getattr(response, "usage", None)
-                    token_summary = ""
-                    if usage:
-                        prompt_tokens = getattr(usage, "prompt_tokens", None)
-                        completion_tokens = getattr(usage, "completion_tokens", None)
-                        total_tokens = getattr(usage, "total_tokens", None)
-                        token_summary = (
-                            f" prompt={prompt_tokens} completion={completion_tokens} total={total_tokens}"
-                        )
-                    
+                model_name = getattr(response, "model", self.model)
+                parsed = getattr(response, "output_parsed", None)
+                if parsed is not None:
                     logger.info(
                         "LLM structured async success model=%s duration=%.3fs%s",
-                        self.model,
+                        model_name,
                         duration,
-                        token_summary,
+                        _format_usage_for_log(usage_info),
                     )
-                    return text.parsed
-                else:
-                    # * Check for refusal message
-                    refusal = getattr(text, "refusal", None)
-                    if refusal:
-                        raise ValueError(f"Model refused: {refusal}")
-                    raise ValueError("Responses API returned no parsed output")
+                    return parsed
+
+                refusal = self._extract_refusal(response)
+                if refusal:
+                    raise ValueError(f"Model refused: {refusal}")
+
+                if getattr(response, "error", None) is not None:
+                    self._log_response_structure_error(response, usage_info)
+                    raise ValueError(f"Responses API error: {response.error}")
+
+                if getattr(response, "incomplete_details", None) is not None:
+                    self._log_response_structure_error(response, usage_info)
+                    raise ValueError(f"Responses API incomplete: {response.incomplete_details}")
+
+                self._log_response_structure_error(response, usage_info)
+                raise ValueError("Responses API returned no parsed output")
 
             except Exception as e:
                 # * Log more details about the error
@@ -345,11 +583,13 @@ class LLMClient:
                     input=text,
                 )
                 duration = time.perf_counter() - start
+                usage_info = self._record_usage_from_embedding(response)
 
                 logger.info(
-                    "Embedding success model=%s duration=%.3fs",
-                    self.embedding_model,
+                    "Embedding success model=%s duration=%.3fs%s",
+                    getattr(response, "model", self.embedding_model),
                     duration,
+                    _format_usage_for_log(usage_info),
                 )
 
                 return response.data[0].embedding
@@ -394,11 +634,13 @@ class LLMClient:
                     input=text,
                 )
                 duration = time.perf_counter() - start
+                usage_info = self._record_usage_from_embedding(response)
 
                 logger.info(
-                    "Embedding async success model=%s duration=%.3fs",
-                    self.embedding_model,
+                    "Embedding async success model=%s duration=%.3fs%s",
+                    getattr(response, "model", self.embedding_model),
                     duration,
+                    _format_usage_for_log(usage_info),
                 )
 
                 return response.data[0].embedding
@@ -419,6 +661,63 @@ class LLMClient:
                     raise RuntimeError(f"Failed after {MAX_RETRIES} attempts: {e}") from e
 
         return []
+
+
+def get_usage_summary() -> dict:
+    """Return aggregated LLM usage summary for the current process."""
+    return USAGE_TRACKER.summary()
+
+
+def format_usage_summary(summary: dict) -> list[str]:
+    """Format usage summary into CLI-friendly lines."""
+    total_requests = summary.get("total_requests", 0)
+    if total_requests == 0:
+        return []
+
+    lines = [f"total_requests={total_requests}"]
+
+    tokens_line = (
+        "tokens"
+        f" input={summary.get('total_input_tokens', 0)}"
+        f" output={summary.get('total_output_tokens', 0)}"
+        f" total={summary.get('total_tokens', 0)}"
+    )
+    if summary.get("total_reasoning_tokens", 0):
+        tokens_line += f" reasoning={summary.get('total_reasoning_tokens', 0)}"
+    if summary.get("total_cached_tokens", 0):
+        tokens_line += f" cached={summary.get('total_cached_tokens', 0)}"
+    lines.append(tokens_line)
+
+    total_cost = summary.get("total_cost_usd", 0.0)
+    pricing_missing_models = summary.get("pricing_missing_models", [])
+    if total_cost or pricing_missing_models:
+        lines.append(f"estimated_cost_usd=${total_cost:.6f}")
+        if pricing_missing_models:
+            missing_keys = []
+            for model in pricing_missing_models:
+                missing_keys.extend(_pricing_env_keys(model))
+            lines.append(f"pricing_missing_env={', '.join(missing_keys)}")
+    else:
+        lines.append("estimated_cost_usd=unavailable (set OPENAI_PRICE_<MODEL>_INPUT_PER_1M/OUTPUT_PER_1M)")
+
+    by_model = summary.get("by_model", {})
+    for model in sorted(by_model):
+        stats = by_model[model]
+        model_line = (
+            f"model={model} requests={stats.get('requests', 0)}"
+            f" input={stats.get('input_tokens', 0)}"
+            f" output={stats.get('output_tokens', 0)}"
+            f" total={stats.get('total_tokens', 0)}"
+        )
+        if stats.get("reasoning_tokens", 0):
+            model_line += f" reasoning={stats.get('reasoning_tokens', 0)}"
+        if stats.get("cached_tokens", 0):
+            model_line += f" cached={stats.get('cached_tokens', 0)}"
+        if stats.get("cost_usd", 0.0):
+            model_line += f" cost=${stats.get('cost_usd', 0.0):.6f}"
+        lines.append(model_line)
+
+    return lines
 
 
 def get_client(api_key: Optional[str] = None) -> LLMClient:

@@ -47,12 +47,10 @@ class KeywordWithMeta(BaseModel):
 class CategorizedKeywordResult(BaseModel):
     """Result with keywords grouped by category."""
 
-    mlops: list[KeywordWithMeta] = Field(default_factory=list)
-    nlp_llm: list[KeywordWithMeta] = Field(default_factory=list)
-    cloud_aws: list[KeywordWithMeta] = Field(default_factory=list)
-    data_engineering: list[KeywordWithMeta] = Field(default_factory=list)
-    classical_ml: list[KeywordWithMeta] = Field(default_factory=list)
-    other: list[KeywordWithMeta] = Field(default_factory=list)
+    research_ml: list[KeywordWithMeta] = Field(default_factory=list)
+    applied_production: list[KeywordWithMeta] = Field(default_factory=list)
+    genai_llm: list[KeywordWithMeta] = Field(default_factory=list)
+    general: list[KeywordWithMeta] = Field(default_factory=list)
 
 
 class HybridKeywordExtractor:
@@ -459,7 +457,7 @@ Analyze which job keywords match the resume and which are missing."""
             """Build CategorizedKeywordResult with importance scoring."""
             result_data = {}
 
-            for category in ["mlops", "nlp_llm", "cloud_aws", "data_engineering", "classical_ml", "other"]:
+            for category in ["research_ml", "applied_production", "genai_llm", "general"]:
                 keywords = keywords_by_category.get(category, [])
                 keyword_metas = []
 
@@ -485,9 +483,9 @@ Analyze which job keywords match the resume and which are missing."""
 
         logger.info(
             "Keywords categorized: matches=%d categories, missing=%d categories",
-            sum(1 for cat in ["mlops", "nlp_llm", "cloud_aws", "data_engineering", "classical_ml", "other"]
+            sum(1 for cat in ["research_ml", "applied_production", "genai_llm", "general"]
                 if getattr(categorized_matches, cat)),
-            sum(1 for cat in ["mlops", "nlp_llm", "cloud_aws", "data_engineering", "classical_ml", "other"]
+            sum(1 for cat in ["research_ml", "applied_production", "genai_llm", "general"]
                 if getattr(categorized_missing, cat)),
         )
 

@@ -35,25 +35,21 @@ RESUME_PATH = PROJECT_ROOT / "resume.tex"
 
 # * Display name mapping for variants
 VARIANT_DISPLAY_NAMES = {
-    "mlops": "MLOps & Platform Engineering",
-    "nlp_llm": "NLP & LLM Engineering",
-    "cloud_aws": "Cloud & AWS Infrastructure",
-    "data_engineering": "Data Engineering & Pipelines",
-    "classical_ml": "Classical ML & Analytics",
+    "research_ml": "Research & Advanced ML",
+    "applied_production": "Applied ML & Production Systems",
+    "genai_llm": "Generative AI & LLM Engineering",
 }
 
 VARIANT_DESCRIPTIONS = {
-    "mlops": "Optimized for MLOps, CI/CD, model deployment, and platform engineering roles",
-    "nlp_llm": "Optimized for NLP, LLM, chatbots, and language model engineering roles",
-    "cloud_aws": "Optimized for cloud infrastructure, AWS, and cloud-native ML roles",
-    "data_engineering": "Optimized for data pipelines, ETL, and data engineering roles",
-    "classical_ml": "Optimized for traditional ML, analytics, and data science roles",
+    "research_ml": "Optimized for research ML, experimentation, and model optimization roles",
+    "applied_production": "Optimized for production ML systems, MLOps, and infrastructure roles",
+    "genai_llm": "Optimized for LLM applications, RAG, and generative AI roles",
 }
 
 
 def _convert_to_schema_keywords(internal_result) -> CategorizedKeywords:
     """Convert internal CategorizedKeywordResult to schema CategorizedKeywords."""
-    categories = ["mlops", "nlp_llm", "cloud_aws", "data_engineering", "classical_ml", "other"]
+    categories = ["research_ml", "applied_production", "genai_llm", "general"]
     result_data = {}
 
     for category in categories:
@@ -111,7 +107,6 @@ class ResumeAnalysisService:
         self,
         job_description: str,
         use_semantic: bool = True,
-        rewrite_bullets: bool = False,  # ! Deprecated, ignored
     ) -> AnalyzeResponse:
         """
         Analyze a job description and find the best resume match.
@@ -123,8 +118,6 @@ class ResumeAnalysisService:
         Args:
             job_description: Job description text.
             use_semantic: Whether to use semantic matching.
-            rewrite_bullets: Ignored (deprecated).
-
         Returns:
             AnalyzeResponse with analysis results.
         """
@@ -136,14 +129,14 @@ class ResumeAnalysisService:
         )
 
         # * Get hybrid semantic match scores
-        best_variant = "classical_ml"
+        best_variant = "applied_production"
         similarity_scores = {}
 
         if use_semantic:
             try:
                 semantic_start = time.perf_counter()
                 semantic_result = self.semantic_matcher.match(job_description)
-                best_variant = semantic_result["best_variant"] or "classical_ml"
+                best_variant = semantic_result["best_variant"] or "applied_production"
                 similarity_scores = semantic_result["all_scores"]
                 semantic_duration = time.perf_counter() - semantic_start
                 logger.info(
@@ -259,14 +252,14 @@ class ResumeAnalysisService:
         )
 
         # * Get hybrid semantic match scores
-        best_variant = "classical_ml"
+        best_variant = "applied_production"
         similarity_scores = {}
 
         if use_semantic:
             try:
                 semantic_start = time.perf_counter()
                 semantic_result = await self.semantic_matcher.match_async(job_description)
-                best_variant = semantic_result["best_variant"] or "classical_ml"
+                best_variant = semantic_result["best_variant"] or "applied_production"
                 similarity_scores = semantic_result["all_scores"]
                 semantic_duration = time.perf_counter() - semantic_start
                 logger.info(

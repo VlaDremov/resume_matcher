@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 # * Keyword category type
 KeywordCategory = Literal[
-    "mlops", "nlp_llm", "cloud_aws", "data_engineering", "classical_ml", "other"
+    "research_ml", "applied_production", "genai_llm", "general"
 ]
 
 # * Keyword importance level
@@ -30,12 +30,10 @@ class KeywordWithMetadata(BaseModel):
 class CategorizedKeywords(BaseModel):
     """Keywords grouped by tech category."""
 
-    mlops: list[KeywordWithMetadata] = Field(default_factory=list)
-    nlp_llm: list[KeywordWithMetadata] = Field(default_factory=list)
-    cloud_aws: list[KeywordWithMetadata] = Field(default_factory=list)
-    data_engineering: list[KeywordWithMetadata] = Field(default_factory=list)
-    classical_ml: list[KeywordWithMetadata] = Field(default_factory=list)
-    other: list[KeywordWithMetadata] = Field(default_factory=list)
+    research_ml: list[KeywordWithMetadata] = Field(default_factory=list)
+    applied_production: list[KeywordWithMetadata] = Field(default_factory=list)
+    genai_llm: list[KeywordWithMetadata] = Field(default_factory=list)
+    general: list[KeywordWithMetadata] = Field(default_factory=list)
 
 
 class AnalyzeRequest(BaseModel):
@@ -152,9 +150,3 @@ class VariantsListResponse(BaseModel):
     variants: list[ResumeVariantInfo]
     count: int
 
-
-class ErrorResponse(BaseModel):
-    """Error response model."""
-
-    error: str
-    detail: Optional[str] = None
