@@ -2,9 +2,7 @@ import { useState } from 'react';
 import {
   AnalyzeResponse,
   CategorizedKeywords,
-  KeywordCategory,
   KeywordWithMetadata,
-  MarketTrendsInfo,
 } from '../api';
 import './ScoreDisplay.css';
 
@@ -12,25 +10,28 @@ interface ScoreDisplayProps {
   result: AnalyzeResponse;
 }
 
-// * Category display configuration
-const CATEGORY_CONFIG: Record<KeywordCategory, { label: string; color: string }> = {
-  research_ml: { label: 'Research ML', color: '#2563EB' },
-  applied_production: { label: 'Applied Prod', color: '#16A34A' },
-  genai_llm: { label: 'GenAI & LLM', color: '#F97316' },
-  general: { label: 'General', color: '#6B7280' },
-};
-
-// * All category keys in display order
-const CATEGORIES: KeywordCategory[] = [
-  'research_ml',
-  'applied_production',
-  'genai_llm',
-  'general',
+const CATEGORY_COLORS = [
+  '#2563EB',
+  '#16A34A',
+  '#F97316',
+  '#DC2626',
+  '#0EA5E9',
+  '#7C3AED',
+  '#A16207',
 ];
 
 // * Count total keywords across all categories
 function countKeywords(categorized: CategorizedKeywords): number {
-  return CATEGORIES.reduce((sum, cat) => sum + categorized[cat].length, 0);
+  return Object.values(categorized).reduce((sum, list) => sum + list.length, 0);
+}
+
+function formatCategoryLabel(category: string, displayName?: string): string {
+  if (displayName) return displayName;
+  if (category.toLowerCase() === 'general') return 'General';
+  return category
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 // * Keyword tag component with importance indicator
@@ -60,20 +61,22 @@ function KeywordTag({ keyword }: { keyword: KeywordWithMetadata }) {
 // * Category section component
 function CategorySection({
   category,
+  label,
+  color,
   keywords,
 }: {
-  category: KeywordCategory;
+  category: string;
+  label: string;
+  color: string;
   keywords: KeywordWithMetadata[];
 }) {
   if (keywords.length === 0) return null;
 
-  const config = CATEGORY_CONFIG[category];
-
   return (
     <div className="category-section">
-      <div className="category-header" style={{ '--category-color': config.color } as React.CSSProperties}>
+      <div className="category-header" style={{ '--category-color': color } as React.CSSProperties}>
         <span className="category-dot" />
-        <span className="category-label">{config.label}</span>
+        <span className="category-label">{label}</span>
         <span className="category-count">{keywords.length}</span>
       </div>
       <div className="keywords-tags-v2">
@@ -94,6 +97,24 @@ export function ScoreDisplay({ result }: ScoreDisplayProps) {
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
 
+  const scoreOrder = result.category_scores.map((score) => score.category);
+  const categoryLabelMap = new Map(
+    result.category_scores.map((score) => [score.category, score.display_name])
+  );
+  const keywordCategories = new Set([
+    ...Object.keys(result.categorized_matches || {}),
+    ...Object.keys(result.categorized_missing || {}),
+  ]);
+  const orderedCategories = [
+    ...scoreOrder,
+    ...Array.from(keywordCategories).filter((category) => !scoreOrder.includes(category)),
+  ];
+  const categoryMeta = orderedCategories.map((category, index) => ({
+    key: category,
+    label: formatCategoryLabel(category, categoryLabelMap.get(category)),
+    color: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
+  }));
+
   // * Find the best variant's score from category_scores
   const bestScore = result.category_scores.find(
     (cat) => cat.category === result.best_variant
@@ -101,14 +122,14 @@ export function ScoreDisplay({ result }: ScoreDisplayProps) {
   const bestScorePercent = bestScore ? Math.round(bestScore.score * 100) : 0;
 
   // * Count keywords using new categorized data if available, else fallback to legacy
-  const hasCategorizedData = result.categorized_matches && result.categorized_missing;
+  const hasCategorizedData = !!result.categorized_matches && !!result.categorized_missing;
 
   const matchedCount = hasCategorizedData
-    ? countKeywords(result.categorized_matches)
+    ? countKeywords(result.categorized_matches || {})
     : result.key_matches.length;
 
   const missingCount = hasCategorizedData
-    ? countKeywords(result.categorized_missing)
+    ? countKeywords(result.categorized_missing || {})
     : result.missing_keywords.length;
 
   const totalKeywords = matchedCount + missingCount;
@@ -183,14 +204,16 @@ export function ScoreDisplay({ result }: ScoreDisplayProps) {
 
                   {/* Categorized keywords */}
                   <div className="categories-grid">
-                    {CATEGORIES.map((category) => (
+                    {categoryMeta.map((category) => (
                       <CategorySection
-                        key={category}
-                        category={category}
+                        key={category.key}
+                        category={category.key}
+                        label={category.label}
+                        color={category.color}
                         keywords={
                           activeTab === 'matched'
-                            ? result.categorized_matches[category]
-                            : result.categorized_missing[category]
+                            ? result.categorized_matches[category.key] || []
+                            : result.categorized_missing[category.key] || []
                         }
                       />
                     ))}

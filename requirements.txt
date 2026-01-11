@@ -2,10 +2,6 @@
 # PDF text extraction
 pdfplumber>=0.10.0
 
-# LinkedIn scraping (optional)
-selenium>=4.15.0
-webdriver-manager>=4.0.0
-
 # NLP and keyword extraction
 spacy>=3.7.0
 scikit-learn>=1.3.0

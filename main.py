@@ -6,8 +6,8 @@ A tool to generate keyword-optimized resume variants and match them
 to job descriptions for improved ATS (Applicant Tracking System) compatibility.
 
 Usage:
-    python main.py generate          # Generate all 3 resume variants
     python main.py cluster-vacancies # Cluster vacancies into categories
+    python main.py generate          # Generate resume variants per cluster
     python main.py analyze           # Analyze keywords in vacancies
 """
 
@@ -25,6 +25,7 @@ load_dotenv()
 DEFAULT_RESUME_PATH = Path(__file__).parent / "resume.tex"
 DEFAULT_OUTPUT_DIR = Path(__file__).parent / "output"
 DEFAULT_VACANCIES_DIR = Path(__file__).parent / "vacancies"
+DEFAULT_CLUSTER_ARTIFACT = DEFAULT_OUTPUT_DIR / "vacancy_clusters.json"
 
 
 @click.group()
@@ -55,6 +56,13 @@ def cli():
     help="Output directory for generated variants",
 )
 @click.option(
+    "--clusters-artifact",
+    "-c",
+    type=click.Path(),
+    default=str(DEFAULT_CLUSTER_ARTIFACT),
+    help="Path to cluster artifact JSON",
+)
+@click.option(
     "--compile-pdf/--no-compile-pdf",
     default=True,
     help="Compile LaTeX to PDF (requires pdflatex)",
@@ -64,14 +72,15 @@ def cli():
     default=False,
     help="Use GPT to genuinely rewrite content per theme (costs ~$0.05, creates meaningfully different variants)",
 )
-def generate(resume: str, output: str, compile_pdf: bool, use_gpt_rewrite: bool):
+def generate(
+    resume: str,
+    output: str,
+    clusters_artifact: str,
+    compile_pdf: bool,
+    use_gpt_rewrite: bool,
+):
     """
-    Generate all 3 keyword-optimized resume variants.
-
-    Creates resume variants focused on:
-    - Research & Advanced ML
-    - Applied ML & Production Systems
-    - Generative AI & LLM Engineering
+    Generate resume variants for each vacancy cluster.
 
     Use --use-gpt-rewrite for genuinely different variants (recommended).
     """
@@ -79,16 +88,17 @@ def generate(resume: str, output: str, compile_pdf: bool, use_gpt_rewrite: bool)
 
     from src.latex_compiler import check_pdflatex_installed, compile_latex_to_pdf
     from src.resume_generator import (
-        generate_all_variants,
-        generate_all_variants_with_gpt,
+        generate_variants_from_clusters,
         list_available_variants,
     )
 
     resume_path = Path(resume)
     output_dir = Path(output)
+    artifact_path = Path(clusters_artifact)
 
     click.echo(f"Source resume: {resume_path}")
     click.echo(f"Output directory: {output_dir}")
+    click.echo(f"Cluster artifact: {artifact_path}")
 
     if use_gpt_rewrite:
         if not os.getenv("OPENAI_API_KEY"):
@@ -102,9 +112,14 @@ def generate(resume: str, output: str, compile_pdf: bool, use_gpt_rewrite: bool)
 
     click.echo()
 
+    if not artifact_path.exists():
+        click.echo(f"Error: cluster artifact not found at {artifact_path}", err=True)
+        click.echo("Run: python main.py cluster-vacancies --clusters 4")
+        sys.exit(1)
+
     # * List variants to be generated
     click.echo("Generating resume variants:")
-    for variant in list_available_variants():
+    for variant in list_available_variants(artifact_path):
         click.echo(f"  • {variant['display_name']}")
     click.echo()
 
@@ -112,11 +127,13 @@ def generate(resume: str, output: str, compile_pdf: bool, use_gpt_rewrite: bool)
     try:
         if use_gpt_rewrite:
             click.echo("Using GPT to rewrite content (this may take 30-60 seconds)...")
-            generated = generate_all_variants_with_gpt(resume_path, output_dir)
-            click.echo(f"\n✓ Generated {len(generated)} GPT-rewritten LaTeX variants")
-        else:
-            generated = generate_all_variants(resume_path, output_dir)
-            click.echo(f"\n✓ Generated {len(generated)} LaTeX variants")
+        generated = generate_variants_from_clusters(
+            resume_path,
+            output_dir,
+            artifact_path,
+            use_gpt_rewrite=use_gpt_rewrite,
+        )
+        click.echo(f"\n✓ Generated {len(generated)} LaTeX variants")
     except Exception as e:
         click.echo(f"✗ Error generating variants: {e}", err=True)
         sys.exit(1)
@@ -244,21 +261,26 @@ def analyze(vacancies: str, top: int, output: str | None):
     "--output",
     "-o",
     type=click.Path(),
-    default=None,
-    help="Save JSON to file",
+    default=str(DEFAULT_CLUSTER_ARTIFACT),
+    help="Save cluster artifact JSON to file",
 )
 @click.option(
     "--clusters",
     "-n",
     type=int,
     default=3,
-    help="Number of clusters",
+    help="Number of clusters (0=auto)",
 )
 @click.option(
     "--gpt/--no-gpt",
     "use_gpt",
     default=True,
     help="Use GPT for enhancement",
+)
+@click.option(
+    "--refresh",
+    is_flag=True,
+    help="Bypass cached clustering results",
 )
 @click.option(
     "--verbose",
@@ -271,15 +293,19 @@ def cluster_vacancies(
     output: str | None,
     clusters: int,
     use_gpt: bool,
+    refresh: bool,
     verbose: bool,
 ):
     """Analyze and cluster all vacancies by keyword similarity."""
-    import json
-
+    from src.cluster_artifacts import build_cluster_artifact, save_cluster_artifact
     from src.vacancy_clustering import VacancyClusteringPipeline
 
     vacancies_dir = Path(vacancies)
-    pipeline = VacancyClusteringPipeline(vacancies_dir=vacancies_dir, use_gpt=use_gpt)
+    pipeline = VacancyClusteringPipeline(
+        vacancies_dir=vacancies_dir,
+        use_gpt=use_gpt,
+        refresh_cache=refresh,
+    )
 
     click.echo(f"Clustering vacancies in: {vacancies_dir}")
     result = pipeline.cluster(num_clusters=clusters)
@@ -296,16 +322,25 @@ def cluster_vacancies(
         )
         if gpt_used:
             click.echo(
-                f"Stage 2: Enhancing with GPT... \u2713 Categorized {stats.get('raw_keywords', 0)} \u2192 {stats.get('gpt_categorized', 0)} canonical keywords"
+                f"Stage 2: Enriching keywords (LLM)... \u2713 {stats.get('canonical_keywords', 0)} canonical keywords"
             )
         elif use_gpt:
-            click.echo("Stage 2: Enhancing with GPT... skipped (no API key)")
+            click.echo("Stage 2: Enriching keywords (LLM)... skipped (no API key)")
         else:
-            click.echo("Stage 2: Enhancing with GPT... skipped (--no-gpt)")
+            click.echo("Stage 2: Enriching keywords (LLM)... skipped (--no-gpt)")
         click.echo(
-            f"Stage 3: Clustering by embeddings... \u2713 Merged to {stats.get('embedding_merged', 0)} keyword groups"
+            f"Stage 3: Deduplicating keywords (embeddings)... \u2713 Merged to {stats.get('embedding_merged', 0)} keyword groups"
         )
-        click.echo("Stage 4: Assigning vacancies... \u2713")
+        vector_source = stats.get("vacancy_vector_source", "unknown")
+        cluster_count = stats.get("cluster_count", len(result.clusters))
+        selection = stats.get("cluster_selection", "requested")
+        click.echo(
+            f"Stage 4: Clustering vacancies ({vector_source})... \u2713 {cluster_count} clusters ({selection})"
+        )
+        label_source = stats.get("label_source", "fallback")
+        click.echo(f"Stage 5: Naming clusters ({label_source})... \u2713")
+        if stats.get("cache_hit"):
+            click.echo("Cache: hit")
 
     def format_keyword_list(items: list[str], counts: dict[str, int], limit: int = 6) -> str:
         if not items:
@@ -315,11 +350,14 @@ def cluster_vacancies(
             parts.append(f"{keyword} ({counts.get(keyword, 0)})")
         return ", ".join(parts)
 
-    for cluster_key, cluster in result.clusters.items():
+    for cluster in result.clusters.values():
         click.echo()
         click.echo("═" * 63)
-        click.echo(f"CLUSTER: {cluster_key} ({len(cluster.vacancies)} vacancies)")
+        click.echo(f"CLUSTER: {cluster.name} ({cluster.slug}) ({len(cluster.vacancies)} vacancies)")
         click.echo("─" * 63)
+
+        if cluster.summary:
+            click.echo(f"Summary: {cluster.summary}")
 
         vacancies_list = ", ".join(cluster.vacancies[:10])
         if len(cluster.vacancies) > 10:
@@ -341,13 +379,11 @@ def cluster_vacancies(
             )
             click.echo(f"Keyword Counts: {top_counts}")
 
-    if output:
-        output_path = Path(output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(result.model_dump(), f, indent=2)
-        click.echo()
-        click.echo(f"Saved clustering report to: {output_path}")
+    output_path = Path(output) if output else DEFAULT_CLUSTER_ARTIFACT
+    artifact = build_cluster_artifact(result, vacancies_dir, clusters)
+    save_cluster_artifact(output_path, artifact)
+    click.echo()
+    click.echo(f"Saved clustering report to: {output_path}")
 
 
 @cli.command()
@@ -431,72 +467,6 @@ def info(resume: str, pdf: str):
 
 
 @cli.command()
-@click.argument("url")
-@click.option(
-    "--cookies",
-    "-c",
-    type=click.Path(),
-    default=None,
-    help="Path to LinkedIn cookies file (JSON)",
-)
-@click.option(
-    "--save-cookies",
-    "-s",
-    type=click.Path(),
-    default=None,
-    help="Save cookies after login",
-)
-def scrape(url: str, cookies: str, save_cookies: str):
-    """
-    Scrape a LinkedIn profile (requires manual login).
-
-    WARNING: This violates LinkedIn's Terms of Service.
-    Use the PDF export method instead when possible.
-
-    Example:
-        python main.py scrape https://www.linkedin.com/in/username/
-    """
-    from deprecated.linkedin_scraper import scrape_linkedin_profile
-
-    click.echo("! Warning: Scraping LinkedIn violates their Terms of Service.")
-    click.echo("  Consider using LinkedIn's PDF export feature instead.")
-    click.echo()
-
-    if not click.confirm("Do you want to continue?"):
-        return
-
-    click.echo()
-    click.echo("A browser window will open. Log in to LinkedIn manually.")
-    click.echo()
-
-    try:
-        data = scrape_linkedin_profile(
-            url,
-            cookies_path=cookies,
-            save_cookies_path=save_cookies,
-        )
-
-        if data:
-            click.echo()
-            click.echo("Scraped Profile Data:")
-            click.echo("=" * 50)
-
-            for key, value in data.items():
-                if isinstance(value, list):
-                    click.echo(f"{key}: {len(value)} items")
-                elif isinstance(value, str) and len(value) > 100:
-                    click.echo(f"{key}: {value[:100]}...")
-                else:
-                    click.echo(f"{key}: {value}")
-        else:
-            click.echo("Failed to scrape profile data.")
-
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-
-@cli.command()
 @click.argument("job_file", type=click.Path(exists=True), required=False)
 @click.option(
     "--text",
@@ -513,11 +483,18 @@ def scrape(url: str, cookies: str, save_cookies: str):
     help="Output path for tailored resume",
 )
 @click.option(
+    "--clusters-artifact",
+    "-c",
+    type=click.Path(),
+    default=str(DEFAULT_CLUSTER_ARTIFACT),
+    help="Path to cluster artifact JSON",
+)
+@click.option(
     "--preview/--no-preview",
     default=False,
     help="Preview changes without saving",
 )
-def tailor(job_file: str, text: str, output: str, preview: bool):
+def tailor(job_file: str, text: str, output: str, clusters_artifact: str, preview: bool):
     """
     Generate a tailored resume using GPT-5 analysis.
 
@@ -554,66 +531,97 @@ def tailor(job_file: str, text: str, output: str, preview: bool):
     click.echo("Analyzing with GPT-5...")
 
     try:
-        from src.bullet_rewriter import BulletRewriter, extract_bullets_from_latex
-        from src.semantic_matcher import SemanticMatcher
+        from src.bullet_rewriter import (
+            BulletRewriter,
+            apply_rewritten_bullets_to_latex,
+            apply_rewritten_summary_to_latex,
+            extract_bullets_from_latex,
+            extract_summary_from_latex,
+        )
+        from src.cluster_artifacts import load_cluster_artifact
+        from src.cluster_matcher import ClusterMatcher
+        from src.resume_generator import build_theme_config_from_cluster
 
-        # * Semantic matching
-        matcher = SemanticMatcher(DEFAULT_OUTPUT_DIR)
+        artifact_path = Path(clusters_artifact)
+        if not artifact_path.exists():
+            click.echo(f"Error: cluster artifact not found at {artifact_path}", err=True)
+            click.echo("Run: python main.py cluster-vacancies --clusters 4")
+            sys.exit(1)
+
+        matcher = ClusterMatcher(artifact_path)
         match_result = matcher.match(job_text)
 
-        best_variant = match_result["best_variant"]
-        similarity = match_result["similarity_score"]
+        best_variant = match_result["best_cluster"]
+        similarity = match_result["best_score"]
+        if not best_variant:
+            click.echo("Error: no clusters available for matching.", err=True)
+            sys.exit(1)
 
         click.echo(f"Best variant: {best_variant} (similarity: {similarity:.2%})")
 
+        artifact = load_cluster_artifact(artifact_path)
+        cluster = next((c for c in artifact.clusters if c.slug == best_variant), None)
+        if not cluster:
+            click.echo(f"Error: cluster '{best_variant}' not found in artifact.", err=True)
+            sys.exit(1)
+
+        theme_config = build_theme_config_from_cluster(cluster)
+
         # * Load variant and extract bullets
         variant_path = DEFAULT_OUTPUT_DIR / f"resume_{best_variant}.tex"
-        with open(variant_path, "r") as f:
+        if not variant_path.exists():
+            click.echo(f"Error: resume variant not found at {variant_path}", err=True)
+            sys.exit(1)
+
+        with open(variant_path, "r", encoding="utf-8") as f:
             latex_content = f.read()
 
         bullets = extract_bullets_from_latex(latex_content)
+        summary = extract_summary_from_latex(latex_content)
         click.echo(f"Found {len(bullets)} bullet points")
 
-        # * Analyze and rewrite
         click.echo()
-        click.echo("Rewriting bullets...")
+        click.echo("Rewriting bullets and summary...")
 
         rewriter = BulletRewriter()
-        result = rewriter.analyze_and_rewrite(
-            job_description=job_text,
-            resume_bullets=bullets[:10],
-            resume_variant=best_variant,
+        rewritten_bullets = rewriter.rewrite_bullets(
+            bullets,
+            best_variant,
+            theme_config,
+        )
+        rewritten_summary = rewriter.rewrite_summary(
+            summary,
+            best_variant,
+            theme_config,
         )
 
-        # * Display results
-        click.echo()
-        click.echo("═" * 50)
-        click.echo(f"  RELEVANCY SCORE: {result.relevancy_score}/100")
-        click.echo("═" * 50)
+        rewritten_content = apply_rewritten_bullets_to_latex(
+            latex_content,
+            bullets,
+            rewritten_bullets,
+        )
+        if rewritten_summary and rewritten_summary.summary != summary:
+            rewritten_content = apply_rewritten_summary_to_latex(
+                rewritten_content,
+                rewritten_summary,
+            )
 
-        if result.key_matches:
+        if output:
+            output_path = Path(output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(rewritten_content)
             click.echo()
-            click.echo("Matched Keywords:")
-            click.echo(f"  {', '.join(result.key_matches[:10])}")
+            click.echo(f"Saved tailored resume to: {output_path}")
 
-        if result.missing_keywords:
+        if preview and rewritten_bullets:
             click.echo()
-            click.echo("Missing Keywords:")
-            click.echo(f"  {', '.join(result.missing_keywords[:10])}")
-
-        if preview and result.rewritten_bullets:
-            click.echo()
-            click.echo("Rewritten Bullets:")
+            click.echo("Rewritten Bullets (preview):")
             click.echo("-" * 50)
-            for rb in result.rewritten_bullets[:5]:
+            for rb in rewritten_bullets[:5]:
                 click.echo(f"Original: {rb.original[:80]}...")
                 click.echo(f"Rewritten: {rb.rewritten[:80]}...")
                 click.echo()
-
-        if result.reasoning:
-            click.echo()
-            click.echo("Analysis:")
-            click.echo(f"  {result.reasoning}")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

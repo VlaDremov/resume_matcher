@@ -5,10 +5,10 @@ A Python tool that generates keyword-optimized resume variants and matches them 
 ## Features
 
 ### GPT-5 Powered Analysis
-- **Semantic Matching**: Uses OpenAI embeddings for understanding synonyms and context
-- **Intelligent Bullet Rewriting**: GPT-5 rewrites experience bullets to emphasize job-relevant keywords
-- **Structured Scoring**: Returns relevancy score (0-100) with detailed analysis
-- **Vacancy-Aware Keyword Base**: Saved vacancy descriptions are used to bias keyword extraction for future analyses
+- **Cluster Matching**: Uses hybrid embeddings to match job descriptions to cluster profiles
+- **Intelligent Bullet Rewriting**: GPT-5 rewrites experience bullets to emphasize cluster-relevant keywords
+- **Structured Scoring**: Returns similarity scores across clusters with detailed keyword analysis
+- **Vacancy-Aware Keyword Base**: Saved vacancy descriptions bias keyword extraction for future analyses
 
 ### Web Interface (FastAPI + React)
 - Modern dark-themed UI
@@ -16,10 +16,10 @@ A Python tool that generates keyword-optimized resume variants and matches them 
 - PDF resume preview
 - Save vacancies to database for future reference
 
-### 3 Resume Variants
-- **Research & Advanced ML** - Experiments, statistical rigor, model optimization
-- **Applied ML & Production Systems** - MLOps, deployment, pipelines, monitoring
-- **Generative AI & LLM Engineering** - LLM apps, RAG, agents, prompt engineering
+### Dynamic Cluster Variants
+- Cluster vacancies into N clusters
+- Persist `output/vacancy_clusters.json` for reuse
+- Generate one resume variant per cluster slug
 
 ## Installation
 
@@ -64,17 +64,17 @@ cd frontend && npm run dev
 ### CLI Commands
 
 ```bash
-# Generate all 3 resume variants
-python main.py generate
+# Cluster vacancies into keyword groups
+python main.py cluster-vacancies --clusters 4
+
+# Generate resume variants per cluster artifact
+python main.py generate --clusters-artifact output/vacancy_clusters.json
 
 # Tailor resume with GPT-5 analysis (V2)
 python main.py tailor vacancies/google.txt
 
 # Preview GPT-5 bullet rewrites
 python main.py tailor vacancies/google.txt --preview
-
-# Cluster vacancies into keyword groups
-python main.py cluster-vacancies
 
 # Analyze keywords from vacancies
 python main.py analyze --top 30
@@ -93,14 +93,13 @@ resume_matcher/
 ├── output/                 # Generated resume variants
 ├── src/
 │   ├── llm_client.py       # OpenAI GPT-5 wrapper
-│   ├── semantic_matcher.py # Embedding-based matching
+│   ├── cluster_matcher.py  # Cluster profile matcher
 │   ├── bullet_rewriter.py  # GPT-5 bullet optimization
 │   ├── keyword_engine.py   # Keyword extraction
 │   ├── resume_generator.py # LaTeX variant generator
 │   ├── vacancy_clustering.py # Vacancy clustering pipeline
+│   ├── cluster_artifacts.py # Cluster artifact IO/models
 │   └── ...
-├── deprecated/
-│   ├── linkedin_scraper.py # Deprecated LinkedIn scraper
 ├── backend/
 │   ├── api.py              # FastAPI endpoints
 │   ├── schemas.py          # Pydantic models

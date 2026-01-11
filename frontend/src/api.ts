@@ -11,11 +11,7 @@ export interface CategoryScore {
 }
 
 // * Keyword category type
-export type KeywordCategory =
-  | 'research_ml'
-  | 'applied_production'
-  | 'genai_llm'
-  | 'general';
+export type KeywordCategory = string;
 
 // * Keyword importance level
 export type KeywordImportance = 'critical' | 'important' | 'nice_to_have';
@@ -31,12 +27,7 @@ export interface KeywordWithMetadata {
 }
 
 // * Keywords grouped by tech category
-export interface CategorizedKeywords {
-  research_ml: KeywordWithMetadata[];
-  applied_production: KeywordWithMetadata[];
-  genai_llm: KeywordWithMetadata[];
-  general: KeywordWithMetadata[];
-}
+export type CategorizedKeywords = Record<string, KeywordWithMetadata[]>;
 
 // * Market trends types
 export interface TrendingSkillInfo {

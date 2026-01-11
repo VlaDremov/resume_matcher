@@ -22,6 +22,7 @@ from backend.schemas import (
     TrendingSkillInfo,
     VacancyInfo,
 )
+from src.cluster_artifacts import load_cluster_artifact
 
 # * Module logger
 logger = logging.getLogger("resume_matcher.services")
@@ -31,33 +32,30 @@ PROJECT_ROOT = Path(__file__).parent.parent
 VACANCIES_DIR = PROJECT_ROOT / "vacancies"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 RESUME_PATH = PROJECT_ROOT / "resume.tex"
+CLUSTER_ARTIFACT_PATH = OUTPUT_DIR / "vacancy_clusters.json"
 
 
-# * Display name mapping for variants
-VARIANT_DISPLAY_NAMES = {
-    "research_ml": "Research & Advanced ML",
-    "applied_production": "Applied ML & Production Systems",
-    "genai_llm": "Generative AI & LLM Engineering",
-}
-
-VARIANT_DESCRIPTIONS = {
-    "research_ml": "Optimized for research ML, experimentation, and model optimization roles",
-    "applied_production": "Optimized for production ML systems, MLOps, and infrastructure roles",
-    "genai_llm": "Optimized for LLM applications, RAG, and generative AI roles",
-}
+def _load_cluster_lookup() -> dict[str, object]:
+    try:
+        artifact = load_cluster_artifact(CLUSTER_ARTIFACT_PATH)
+    except FileNotFoundError:
+        logger.warning("Cluster artifact not found at %s", CLUSTER_ARTIFACT_PATH)
+        return {}
+    except Exception as exc:
+        logger.warning("Failed to load cluster artifact: %s", exc)
+        return {}
+    return {cluster.slug: cluster for cluster in artifact.clusters}
 
 
-def _convert_to_schema_keywords(internal_result) -> CategorizedKeywords:
-    """Convert internal CategorizedKeywordResult to schema CategorizedKeywords."""
-    categories = ["research_ml", "applied_production", "genai_llm", "general"]
-    result_data = {}
+def _convert_to_schema_keywords(internal_result: dict[str, list[object]]) -> CategorizedKeywords:
+    """Convert internal categorized keywords to schema-compatible mapping."""
+    result_data: dict[str, list[KeywordWithMetadata]] = {}
 
-    for category in categories:
-        internal_list = getattr(internal_result, category, [])
+    for category, internal_list in internal_result.items():
         schema_list = [
             KeywordWithMetadata(
                 keyword=kw.keyword,
-                category=kw.category,
+                category=category,
                 importance=kw.importance,
                 is_matched=kw.is_matched,
                 is_trending=False,  # Will be populated by market trends later
@@ -67,7 +65,32 @@ def _convert_to_schema_keywords(internal_result) -> CategorizedKeywords:
         ]
         result_data[category] = schema_list
 
-    return CategorizedKeywords(**result_data)
+    return result_data
+
+
+def _score_clusters_by_keywords(
+    job_description: str,
+    cluster_lookup: dict[str, object],
+) -> dict[str, float]:
+    if not cluster_lookup:
+        return {}
+
+    job_lower = job_description.lower()
+    scores: dict[str, float] = {}
+
+    for slug, cluster in cluster_lookup.items():
+        keywords = (
+            cluster.top_keywords
+            + cluster.defining_technologies
+            + cluster.defining_skills
+        )
+        matches = sum(1 for kw in keywords if kw.lower() in job_lower)
+        scores[slug] = float(matches)
+
+    total = sum(scores.values())
+    if total > 0:
+        scores = {slug: score / total for slug, score in scores.items()}
+    return scores
 
 
 class ResumeAnalysisService:
@@ -75,24 +98,24 @@ class ResumeAnalysisService:
 
     def __init__(self):
         """Initialize the analysis service."""
-        self._semantic_matcher = None
+        self._cluster_matcher = None
         self._keyword_extractor = None
         self._market_trends = None
 
     @property
-    def semantic_matcher(self):
-        """Lazy-load semantic matcher with hybrid embeddings."""
-        if self._semantic_matcher is None:
-            from src.semantic_matcher import SemanticMatcher
-            self._semantic_matcher = SemanticMatcher(OUTPUT_DIR)
-        return self._semantic_matcher
+    def cluster_matcher(self):
+        """Lazy-load cluster matcher with hybrid embeddings."""
+        if self._cluster_matcher is None:
+            from src.cluster_matcher import ClusterMatcher
+            self._cluster_matcher = ClusterMatcher(CLUSTER_ARTIFACT_PATH)
+        return self._cluster_matcher
 
     @property
     def keyword_extractor(self):
         """Lazy-load hybrid keyword extractor."""
         if self._keyword_extractor is None:
             from src.hybrid_keywords import HybridKeywordExtractor
-            self._keyword_extractor = HybridKeywordExtractor()
+            self._keyword_extractor = HybridKeywordExtractor(artifact_path=CLUSTER_ARTIFACT_PATH)
         return self._keyword_extractor
 
     @property
@@ -129,46 +152,48 @@ class ResumeAnalysisService:
         )
 
         # * Get hybrid semantic match scores
-        best_variant = "applied_production"
+        best_variant = None
         similarity_scores = {}
+        cluster_lookup = _load_cluster_lookup()
 
         if use_semantic:
             try:
                 semantic_start = time.perf_counter()
-                semantic_result = self.semantic_matcher.match(job_description)
-                best_variant = semantic_result["best_variant"] or "applied_production"
-                similarity_scores = semantic_result["all_scores"]
+                semantic_result = self.cluster_matcher.match(job_description)
+                best_variant = semantic_result["best_cluster"]
+                similarity_scores = semantic_result["scores"]
                 semantic_duration = time.perf_counter() - semantic_start
                 logger.info(
-                    "Hybrid semantic match complete variant=%s duration=%.3fs categories=%s",
+                    "Cluster semantic match complete variant=%s duration=%.3fs categories=%s",
                     best_variant,
                     semantic_duration,
                     len(similarity_scores),
                 )
             except Exception as e:
-                logger.error("Semantic matching failed: %s", e, exc_info=True)
-                # * Fall back to keyword-based matching
-                from src.keyword_engine import find_best_theme_for_job, match_job_to_categories
-                best_variant, _ = find_best_theme_for_job(job_description)
-                similarity_scores = match_job_to_categories(job_description)
+                logger.error("Cluster matching failed: %s", e, exc_info=True)
+                similarity_scores = _score_clusters_by_keywords(job_description, cluster_lookup)
         else:
-            # * Use keyword-based matching only
-            from src.keyword_engine import find_best_theme_for_job, match_job_to_categories
-            best_variant, _ = find_best_theme_for_job(job_description)
-            similarity_scores = match_job_to_categories(job_description)
+            similarity_scores = _score_clusters_by_keywords(job_description, cluster_lookup)
             logger.info(
-                "Keyword-based matching selected variant=%s categories=%s",
-                best_variant,
+                "Keyword-based cluster matching categories=%s",
                 len(similarity_scores),
             )
+
+        if not similarity_scores and cluster_lookup:
+            similarity_scores = {slug: 0.0 for slug in cluster_lookup}
+
+        if similarity_scores:
+            best_variant = max(similarity_scores, key=similarity_scores.get)
 
         # * Build category scores
         category_scores = []
         for variant, score in similarity_scores.items():
+            cluster = cluster_lookup.get(variant)
+            display_name = cluster.name if cluster else variant.replace("_", " ").title()
             category_scores.append(CategoryScore(
                 category=variant,
                 score=round(score, 3),
-                display_name=VARIANT_DISPLAY_NAMES.get(variant, variant.title()),
+                display_name=display_name,
             ))
 
         # * Sort by score descending
@@ -177,13 +202,18 @@ class ResumeAnalysisService:
         # * Extract keywords using hybrid approach
         key_matches = []
         missing_keywords = []
-        categorized_matches = CategorizedKeywords()
-        categorized_missing = CategorizedKeywords()
+        categorized_matches = {}
+        categorized_missing = {}
 
         try:
             keywords_start = time.perf_counter()
             # * Get resume text for the best variant
-            resume_text = self.semantic_matcher.get_variant_text(best_variant) or ""
+            resume_text = ""
+            if best_variant:
+                variant_path = OUTPUT_DIR / f"resume_{best_variant}.tex"
+                if variant_path.exists():
+                    with open(variant_path, "r", encoding="utf-8") as f:
+                        resume_text = f.read()
 
             key_matches, missing_keywords = self.keyword_extractor.extract_keywords_hybrid(
                 job_text=job_description,
@@ -216,9 +246,15 @@ class ResumeAnalysisService:
             total_duration,
         )
 
+        best_variant_display = best_variant or ""
+        if best_variant and best_variant in cluster_lookup:
+            best_variant_display = cluster_lookup[best_variant].name
+        elif best_variant:
+            best_variant_display = best_variant.replace("_", " ").title()
+
         return AnalyzeResponse(
-            best_variant=best_variant,
-            best_variant_display=VARIANT_DISPLAY_NAMES.get(best_variant, best_variant.title()),
+            best_variant=best_variant or "",
+            best_variant_display=best_variant_display,
             category_scores=category_scores,
             categorized_matches=categorized_matches,
             categorized_missing=categorized_missing,
@@ -252,54 +288,52 @@ class ResumeAnalysisService:
         )
 
         # * Get hybrid semantic match scores
-        best_variant = "applied_production"
+        best_variant = None
         similarity_scores = {}
+        cluster_lookup = _load_cluster_lookup()
 
         if use_semantic:
             try:
                 semantic_start = time.perf_counter()
-                semantic_result = await self.semantic_matcher.match_async(job_description)
-                best_variant = semantic_result["best_variant"] or "applied_production"
-                similarity_scores = semantic_result["all_scores"]
+                semantic_result = await self.cluster_matcher.match_async(job_description)
+                best_variant = semantic_result["best_cluster"]
+                similarity_scores = semantic_result["scores"]
                 semantic_duration = time.perf_counter() - semantic_start
                 logger.info(
-                    "Hybrid semantic match async complete variant=%s duration=%.3fs categories=%s",
+                    "Cluster semantic match async complete variant=%s duration=%.3fs categories=%s",
                     best_variant,
                     semantic_duration,
                     len(similarity_scores),
                 )
             except Exception as e:
-                logger.error("Semantic matching async failed: %s", e, exc_info=True)
-                # * Fall back to keyword-based matching (run in thread)
-                from src.keyword_engine import find_best_theme_for_job, match_job_to_categories
-                best_variant, _ = await asyncio.to_thread(
-                    find_best_theme_for_job, job_description
-                )
+                logger.error("Cluster matching async failed: %s", e, exc_info=True)
                 similarity_scores = await asyncio.to_thread(
-                    match_job_to_categories, job_description
+                    _score_clusters_by_keywords, job_description, cluster_lookup
                 )
         else:
-            # * Use keyword-based matching only (run in thread)
-            from src.keyword_engine import find_best_theme_for_job, match_job_to_categories
-            best_variant, _ = await asyncio.to_thread(
-                find_best_theme_for_job, job_description
-            )
             similarity_scores = await asyncio.to_thread(
-                match_job_to_categories, job_description
+                _score_clusters_by_keywords, job_description, cluster_lookup
             )
             logger.info(
-                "Keyword-based matching selected variant=%s categories=%s",
-                best_variant,
+                "Keyword-based cluster matching categories=%s",
                 len(similarity_scores),
             )
+
+        if not similarity_scores and cluster_lookup:
+            similarity_scores = {slug: 0.0 for slug in cluster_lookup}
+
+        if similarity_scores:
+            best_variant = max(similarity_scores, key=similarity_scores.get)
 
         # * Build category scores
         category_scores = []
         for variant, score in similarity_scores.items():
+            cluster = cluster_lookup.get(variant)
+            display_name = cluster.name if cluster else variant.replace("_", " ").title()
             category_scores.append(CategoryScore(
                 category=variant,
                 score=round(score, 3),
-                display_name=VARIANT_DISPLAY_NAMES.get(variant, variant.title()),
+                display_name=display_name,
             ))
 
         # * Sort by score descending
@@ -308,13 +342,18 @@ class ResumeAnalysisService:
         # * Extract keywords using hybrid approach (async)
         key_matches = []
         missing_keywords = []
-        categorized_matches = CategorizedKeywords()
-        categorized_missing = CategorizedKeywords()
+        categorized_matches = {}
+        categorized_missing = {}
 
         try:
             keywords_start = time.perf_counter()
             # * Get resume text for the best variant
-            resume_text = self.semantic_matcher.get_variant_text(best_variant) or ""
+            resume_text = ""
+            if best_variant:
+                variant_path = OUTPUT_DIR / f"resume_{best_variant}.tex"
+                if variant_path.exists():
+                    with open(variant_path, "r", encoding="utf-8") as f:
+                        resume_text = f.read()
 
             key_matches, missing_keywords = await self.keyword_extractor.extract_keywords_hybrid_async(
                 job_text=job_description,
@@ -379,9 +418,15 @@ class ResumeAnalysisService:
             total_duration,
         )
 
+        best_variant_display = best_variant or ""
+        if best_variant and best_variant in cluster_lookup:
+            best_variant_display = cluster_lookup[best_variant].name
+        elif best_variant:
+            best_variant_display = best_variant.replace("_", " ").title()
+
         return AnalyzeResponse(
-            best_variant=best_variant,
-            best_variant_display=VARIANT_DISPLAY_NAMES.get(best_variant, best_variant.title()),
+            best_variant=best_variant or "",
+            best_variant_display=best_variant_display,
             category_scores=category_scores,
             categorized_matches=categorized_matches,
             categorized_missing=categorized_missing,
@@ -529,15 +574,16 @@ class ResumeVariantService:
             List of ResumeVariantInfo objects.
         """
         variants = []
+        cluster_lookup = _load_cluster_lookup()
 
-        for variant_name, display_name in VARIANT_DISPLAY_NAMES.items():
+        for variant_name, cluster in cluster_lookup.items():
             tex_path = OUTPUT_DIR / f"resume_{variant_name}.tex"
             pdf_path = OUTPUT_DIR / f"resume_{variant_name}.pdf"
 
             variants.append(ResumeVariantInfo(
                 name=variant_name,
-                display_name=display_name,
-                description=VARIANT_DESCRIPTIONS.get(variant_name, ""),
+                display_name=cluster.name,
+                description=cluster.summary or "",
                 tex_exists=tex_path.exists(),
                 pdf_exists=pdf_path.exists(),
                 tex_path=str(tex_path) if tex_path.exists() else None,

@@ -1,7 +1,7 @@
 """
 Hybrid Keyword Extraction Module.
 
-Combines local TF-IDF/taxonomy-based extraction with GPT-powered
+Combines local TF-IDF/cluster-keyword extraction with GPT-powered
 analysis for better keyword matching accuracy. Supports async
 operations for parallel execution.
 """
@@ -9,17 +9,17 @@ operations for parallel execution.
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from src.keyword_engine import (
-    TECH_TAXONOMY,
-    cluster_keywords,
-    extract_keywords_from_text,
-)
+from src.cluster_artifacts import load_cluster_artifact
+from src.keyword_engine import extract_keywords_from_text
 
 logger = logging.getLogger("resume_matcher.hybrid_keywords")
+
+DEFAULT_CLUSTER_ARTIFACT = Path("output/vacancy_clusters.json")
 
 
 class KeywordAnalysis(BaseModel):
@@ -44,13 +44,7 @@ class KeywordWithMeta(BaseModel):
     is_matched: bool = False
 
 
-class CategorizedKeywordResult(BaseModel):
-    """Result with keywords grouped by category."""
-
-    research_ml: list[KeywordWithMeta] = Field(default_factory=list)
-    applied_production: list[KeywordWithMeta] = Field(default_factory=list)
-    genai_llm: list[KeywordWithMeta] = Field(default_factory=list)
-    general: list[KeywordWithMeta] = Field(default_factory=list)
+CategorizedKeywordResult = dict[str, list[KeywordWithMeta]]
 
 
 class HybridKeywordExtractor:
@@ -59,7 +53,7 @@ class HybridKeywordExtractor:
 
     Local extraction (fast, free):
     - TF-IDF keyword extraction
-    - Taxonomy matching against predefined tech categories
+    - Cluster keyword matching (from artifact)
 
     GPT extraction (better understanding):
     - Contextual keyword analysis
@@ -69,15 +63,20 @@ class HybridKeywordExtractor:
     Supports async operations for parallel execution.
     """
 
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None, artifact_path: str | Path | None = None):
         """
         Initialize the hybrid keyword extractor.
 
         Args:
             llm_client: Optional LLMClient for GPT-based extraction.
+            artifact_path: Path to cluster artifact JSON (optional).
         """
         self._llm_client = llm_client
         self._use_gpt = os.getenv("USE_GPT_KEYWORDS", "true").lower() == "true"
+        self._artifact_path = Path(artifact_path) if artifact_path else DEFAULT_CLUSTER_ARTIFACT
+        self._artifact_mtime_ns: Optional[int] = None
+        self._cluster_keywords: dict[str, set[str]] = {}
+        self._load_cluster_keywords()
 
     @property
     def llm_client(self):
@@ -91,13 +90,77 @@ class HybridKeywordExtractor:
                 self._llm_client = None
         return self._llm_client
 
+    def _normalize_keyword(self, keyword: str) -> str:
+        return " ".join(keyword.lower().split())
+
+    def _load_cluster_keywords(self) -> None:
+        if not self._artifact_path.exists():
+            self._cluster_keywords = {}
+            return
+
+        try:
+            artifact = load_cluster_artifact(self._artifact_path)
+        except Exception as exc:
+            logger.warning("Failed to load cluster artifact: %s", exc)
+            self._cluster_keywords = {}
+            return
+
+        try:
+            self._artifact_mtime_ns = self._artifact_path.stat().st_mtime_ns
+        except OSError:
+            self._artifact_mtime_ns = None
+
+        cluster_keywords: dict[str, set[str]] = {}
+        for cluster in artifact.clusters:
+            keywords = (
+                cluster.top_keywords
+                + cluster.defining_technologies
+                + cluster.defining_skills
+            )
+            normalized = {
+                self._normalize_keyword(kw)
+                for kw in keywords
+                if kw and self._normalize_keyword(kw)
+            }
+            if normalized:
+                cluster_keywords[cluster.slug] = normalized
+
+        self._cluster_keywords = cluster_keywords
+
+    def _maybe_reload_cluster_keywords(self) -> None:
+        if not self._artifact_path.exists():
+            return
+        try:
+            mtime_ns = self._artifact_path.stat().st_mtime_ns
+        except OSError:
+            return
+        if self._artifact_mtime_ns is None or mtime_ns > self._artifact_mtime_ns:
+            self._load_cluster_keywords()
+
+    def _keyword_matches_cluster(self, keyword: str, cluster_keywords: set[str]) -> bool:
+        kw_norm = self._normalize_keyword(keyword)
+        if not kw_norm:
+            return False
+        kw_compact = kw_norm.replace(" ", "")
+        for cluster_kw in cluster_keywords:
+            if kw_norm == cluster_kw:
+                return True
+            cluster_compact = cluster_kw.replace(" ", "")
+            if kw_compact == cluster_compact:
+                return True
+            if kw_norm in cluster_kw or cluster_kw in kw_norm:
+                return True
+            if kw_compact in cluster_compact or cluster_compact in kw_compact:
+                return True
+        return False
+
     def extract_keywords_local(
         self,
         job_text: str,
         resume_text: str,
     ) -> tuple[list[str], list[str]]:
         """
-        Extract keywords using local TF-IDF and taxonomy matching.
+        Extract keywords using local TF-IDF and cluster keyword matching.
 
         Args:
             job_text: Job description text.
@@ -110,11 +173,13 @@ class HybridKeywordExtractor:
         job_keywords = extract_keywords_from_text(job_text, top_n=50)
         job_kw_set = {kw.lower() for kw, _ in job_keywords}
 
-        # * Add taxonomy keywords found in job
-        for category, tech_keywords in TECH_TAXONOMY.items():
-            for tech_kw in tech_keywords:
-                if tech_kw.lower() in job_text.lower():
-                    job_kw_set.add(tech_kw.lower())
+        # * Add cluster keywords found in job
+        self._maybe_reload_cluster_keywords()
+        job_lower = job_text.lower()
+        for keywords in self._cluster_keywords.values():
+            for kw in keywords:
+                if kw in job_lower:
+                    job_kw_set.add(kw)
 
         # * Check which keywords appear in resume
         resume_lower = resume_text.lower()
@@ -389,6 +454,28 @@ Analyze which job keywords match the resume and which are missing."""
 
         return result
 
+    def _categorize_keywords_by_cluster(self, keywords: list[str]) -> dict[str, list[str]]:
+        self._maybe_reload_cluster_keywords()
+        if not self._cluster_keywords:
+            return {"general": list(dict.fromkeys(keywords))}
+
+        categorized: dict[str, list[str]] = {
+            slug: [] for slug in self._cluster_keywords.keys()
+        }
+        categorized["general"] = []
+
+        for kw in keywords:
+            assigned = False
+            for slug, cluster_keywords in self._cluster_keywords.items():
+                if self._keyword_matches_cluster(kw, cluster_keywords):
+                    categorized[slug].append(kw)
+                    assigned = True
+                    break
+            if not assigned:
+                categorized["general"].append(kw)
+
+        return categorized
+
     def _score_importance(self, keyword: str, job_text: str) -> str:
         """
         Score keyword importance based on frequency and position in job description.
@@ -436,7 +523,7 @@ Analyze which job keywords match the resume and which are missing."""
         """
         Categorize keywords and assign importance levels.
 
-        Uses cluster_keywords() from keyword_engine and adds importance scoring.
+        Uses cluster artifact keyword sets and adds importance scoring.
 
         Args:
             key_matches: Keywords found in resume.
@@ -446,21 +533,20 @@ Analyze which job keywords match the resume and which are missing."""
         Returns:
             Tuple of (categorized_matches, categorized_missing).
         """
-        # * Categorize using existing function
-        matches_by_category = cluster_keywords(key_matches)
-        missing_by_category = cluster_keywords(missing_keywords)
+        # * Categorize using cluster keywords
+        matches_by_category = self._categorize_keywords_by_cluster(key_matches)
+        missing_by_category = self._categorize_keywords_by_cluster(missing_keywords)
 
         def build_categorized_result(
             keywords_by_category: dict[str, list[str]],
             is_matched: bool,
         ) -> CategorizedKeywordResult:
-            """Build CategorizedKeywordResult with importance scoring."""
-            result_data = {}
+            """Build categorized keyword mapping with importance scoring."""
+            result_data: dict[str, list[KeywordWithMeta]] = {}
+            importance_order = {"critical": 0, "important": 1, "nice_to_have": 2}
 
-            for category in ["research_ml", "applied_production", "genai_llm", "general"]:
-                keywords = keywords_by_category.get(category, [])
+            for category, keywords in keywords_by_category.items():
                 keyword_metas = []
-
                 for kw in keywords:
                     importance = self._score_importance(kw, job_text)
                     keyword_metas.append(KeywordWithMeta(
@@ -470,23 +556,18 @@ Analyze which job keywords match the resume and which are missing."""
                         is_matched=is_matched,
                     ))
 
-                # * Sort by importance: critical > important > nice_to_have
-                importance_order = {"critical": 0, "important": 1, "nice_to_have": 2}
                 keyword_metas.sort(key=lambda x: importance_order.get(x.importance, 3))
-
                 result_data[category] = keyword_metas
 
-            return CategorizedKeywordResult(**result_data)
+            return result_data
 
         categorized_matches = build_categorized_result(matches_by_category, is_matched=True)
         categorized_missing = build_categorized_result(missing_by_category, is_matched=False)
 
         logger.info(
             "Keywords categorized: matches=%d categories, missing=%d categories",
-            sum(1 for cat in ["research_ml", "applied_production", "genai_llm", "general"]
-                if getattr(categorized_matches, cat)),
-            sum(1 for cat in ["research_ml", "applied_production", "genai_llm", "general"]
-                if getattr(categorized_missing, cat)),
+            sum(1 for values in categorized_matches.values() if values),
+            sum(1 for values in categorized_missing.values() if values),
         )
 
         return categorized_matches, categorized_missing

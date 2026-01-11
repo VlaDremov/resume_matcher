@@ -2,15 +2,13 @@
 Pydantic Schemas for API Request/Response Models.
 """
 
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 
 # * Keyword category type
-KeywordCategory = Literal[
-    "research_ml", "applied_production", "genai_llm", "general"
-]
+KeywordCategory = str
 
 # * Keyword importance level
 KeywordImportance = Literal["critical", "important", "nice_to_have"]
@@ -27,13 +25,7 @@ class KeywordWithMetadata(BaseModel):
     demand_level: Optional[str] = Field(None, description="Market demand: high/medium/low")
 
 
-class CategorizedKeywords(BaseModel):
-    """Keywords grouped by tech category."""
-
-    research_ml: list[KeywordWithMetadata] = Field(default_factory=list)
-    applied_production: list[KeywordWithMetadata] = Field(default_factory=list)
-    genai_llm: list[KeywordWithMetadata] = Field(default_factory=list)
-    general: list[KeywordWithMetadata] = Field(default_factory=list)
+CategorizedKeywords = dict[str, list[KeywordWithMetadata]]
 
 
 class AnalyzeRequest(BaseModel):
@@ -79,11 +71,11 @@ class AnalyzeResponse(BaseModel):
 
     # * Rich keyword data (new)
     categorized_matches: CategorizedKeywords = Field(
-        default_factory=CategorizedKeywords,
+        default_factory=dict,
         description="Matched keywords grouped by category with importance",
     )
     categorized_missing: CategorizedKeywords = Field(
-        default_factory=CategorizedKeywords,
+        default_factory=dict,
         description="Missing keywords grouped by category with importance",
     )
 
@@ -149,4 +141,3 @@ class VariantsListResponse(BaseModel):
 
     variants: list[ResumeVariantInfo]
     count: int
-

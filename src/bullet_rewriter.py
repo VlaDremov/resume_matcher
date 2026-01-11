@@ -116,9 +116,7 @@ class BulletRewriter:
         theme_config: dict,
     ) -> tuple[str, str]:
         """Build prompts for bullet rewriting."""
-        from src.keyword_engine import TECH_TAXONOMY
-
-        theme_keywords = TECH_TAXONOMY.get(theme_config.get("primary_category", ""), [])
+        theme_keywords = theme_config.get("keywords", [])
         experience_keywords = theme_config.get("experience_keywords", [])
 
         system_prompt = f"""You are an expert resume writer specializing in {theme_config.get('name', theme_name)} roles.
@@ -169,6 +167,7 @@ Rewrite each bullet to better target {theme_config.get('name', theme_name)} role
         theme_config: dict,
     ) -> tuple[str, str]:
         """Build prompts for summary rewriting."""
+        theme_keywords = theme_config.get("keywords", [])
         system_prompt = f"""You are an expert resume writer specializing in {theme_config.get('name', theme_name)}.
 
 Rewrite the professional summary to target {theme_config.get('name', theme_name)} positions.
@@ -178,7 +177,8 @@ Guidelines:
 2. Emphasize relevant experience and skills for {theme_config.get('name', theme_name)}
 3. Maintain a professional tone
 4. Do NOT fabricate experience
-5. Highlight transferable skills where relevant"""
+5. Highlight transferable skills where relevant
+6. Where natural, incorporate 1-2 of these focus keywords: {', '.join(theme_keywords[:8])}"""
 
         user_prompt = f"""Original summary:
 {summary}
@@ -199,7 +199,7 @@ Rewrite for {theme_config.get('name', theme_name)} roles."""
         Args:
             bullets: Original bullet texts (without LaTeX formatting).
             theme_name: Theme identifier.
-            theme_config: Theme configuration from get_resume_themes().
+            theme_config: Theme configuration derived from a cluster artifact.
 
         Returns:
             List of RewrittenBullet with original and rewritten text.
