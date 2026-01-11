@@ -11,12 +11,15 @@ Supports two modes:
 
 import asyncio
 import logging
+import os
 import re
 from pathlib import Path
 
 from src.cluster_artifacts import ClusterArtifact, load_cluster_artifact
 
 logger = logging.getLogger("resume_matcher.generator")
+
+_CATEGORY_ORDER_CACHE: dict[tuple[str, tuple[str, ...]], list[str]] = {}
 
 
 def _dedupe_keywords(items: list[str]) -> list[str]:
@@ -72,6 +75,7 @@ def generate_variants_from_clusters(
     output_dir: str | Path,
     artifact_path: str | Path,
     use_gpt_rewrite: bool = False,
+    use_gpt_cache: bool = True,
 ) -> dict[str, Path]:
     """
     Generate resume variants for each cluster in the artifact.
@@ -91,6 +95,7 @@ def generate_variants_from_clusters(
                 source_resume_path,
                 output_dir,
                 artifact_path,
+                use_cache=use_gpt_cache,
             )
         )
 
@@ -191,10 +196,12 @@ def _reorder_skills_section(content: str, theme_config: dict) -> str:
     )
 
     categories = {}
+    category_skills = {}
     for cat_match in category_pattern.finditer(skills_content):
         cat_name = cat_match.group(1).strip()
         cat_skills = cat_match.group(2).strip()
         categories[cat_name] = cat_skills
+        category_skills[cat_name] = _split_skills_list(cat_skills)
 
     if not categories:
         return content
@@ -203,7 +210,7 @@ def _reorder_skills_section(content: str, theme_config: dict) -> str:
     priority_skills = [s.lower() for s in theme_config.get("skills_priority", [])]
 
     for cat_name, cat_skills in categories.items():
-        skills_list = _split_skills_list(cat_skills)
+        skills_list = category_skills.get(cat_name, _split_skills_list(cat_skills))
 
         # * Sort: priority skills first, then alphabetically
         def skill_sort_key(skill):
@@ -218,7 +225,11 @@ def _reorder_skills_section(content: str, theme_config: dict) -> str:
 
     # * Rebuild skills section with preferred category order
     # * Order categories based on theme
-    category_order = _get_category_order_for_theme(theme_config, list(categories.keys()))
+    category_order = _get_category_order_for_theme(
+        theme_config,
+        category_skills,
+        list(categories.keys()),
+    )
 
     new_skills_lines = []
     for cat_name in category_order:
@@ -269,41 +280,56 @@ def _split_skills_list(skills_text: str) -> list[str]:
     return skills
 
 
-def _get_category_order_for_theme(theme_config: dict, available_categories: list[str]) -> list[str]:
+def _get_category_order_for_theme(
+    theme_config: dict,
+    category_skills: dict[str, list[str]],
+    original_order: list[str],
+) -> list[str]:
     """
-    Determine the optimal category order for a theme.
+    Determine the optimal category order for a theme using keyword overlap.
 
     Args:
         theme_config: Theme configuration.
-        available_categories: List of available category names.
+        category_skills: Mapping of category name to skill list.
+        original_order: Original category order from the resume.
 
     Returns:
         Ordered list of category names.
     """
-    # * Default priority mapping based on theme
-    theme_primary = theme_config.get("primary_category", "")
-    explicit_order = theme_config.get("category_order", [])
+    theme_slug = theme_config.get("slug") or theme_config.get("name", "")
+    cache_key = (str(theme_slug), tuple(original_order))
+    if cache_key in _CATEGORY_ORDER_CACHE:
+        return _CATEGORY_ORDER_CACHE[cache_key]
 
-    # * Define preferred order for each theme
-    order_preferences = {
-        "research_ml": ["Frameworks and Libraries", "Languages", "Developer Tools", "Cloud Platforms"],
-        "applied_production": ["Developer Tools", "Cloud Platforms", "Frameworks and Libraries", "Languages"],
-        "genai_llm": ["Frameworks and Libraries", "Languages", "Developer Tools", "Cloud Platforms"],
+    keyword_pool = _dedupe_keywords(
+        theme_config.get("skills_priority", []) + theme_config.get("keywords", [])
+    )
+    if not keyword_pool:
+        return original_order
+
+    keyword_lower = [kw.lower() for kw in keyword_pool]
+
+    def score_category(skills: list[str]) -> int:
+        score = 0
+        for skill in skills:
+            skill_lower = skill.lower()
+            for kw in keyword_lower:
+                if kw in skill_lower or skill_lower in kw:
+                    score += max(1, len(kw))
+        return score
+
+    scores = {
+        category: score_category(skills)
+        for category, skills in category_skills.items()
     }
+    indexed_order = {name: idx for idx, name in enumerate(original_order)}
 
-    preferred = explicit_order or order_preferences.get(theme_primary, [])
-
-    # * Build final order: preferred categories first, then remaining
-    result = []
-    for cat in preferred:
-        if cat in available_categories and cat not in result:
-            result.append(cat)
-
-    for cat in available_categories:
-        if cat not in result:
-            result.append(cat)
-
-    return result
+    ordered = sorted(
+        original_order,
+        key=lambda name: (-scores.get(name, 0), indexed_order.get(name, 0), name),
+    )
+    _CATEGORY_ORDER_CACHE[cache_key] = ordered
+    return ordered
 
 
 def _enhance_experience_bullets(content: str, theme_config: dict) -> str:
@@ -459,6 +485,7 @@ async def _generate_variants_from_clusters_with_gpt_async(
     source_resume_path: str | Path,
     output_dir: str | Path,
     artifact_path: str | Path,
+    use_cache: bool = True,
 ) -> dict[str, Path]:
     """
     Generate cluster-driven resume variants with GPT-powered content rewriting (async).
@@ -499,32 +526,65 @@ async def _generate_variants_from_clusters_with_gpt_async(
     )
 
     # * Initialize rewriter
-    rewriter = BulletRewriter()
+    rewriter = BulletRewriter(use_cache=use_cache)
 
-    # * Rewrite bullets for all themes in parallel
-    rewrite_tasks = []
-    for theme_name, theme_config in themes.items():
-        bullet_task = rewriter.rewrite_bullets_async(
-            original_bullets, theme_name, theme_config
-        )
-        summary_task = rewriter.rewrite_summary_async(
-            original_summary, theme_name, theme_config
-        )
-        rewrite_tasks.append((theme_name, bullet_task, summary_task))
-
-    # * Wait for all rewrites to complete
-    logger.info("Starting GPT rewriting for %d clusters...", len(themes))
-
-    results_by_theme = {}
-    for theme_name, bullet_task, summary_task in rewrite_tasks:
+    concurrency_raw = os.getenv("GPT_REWRITE_CONCURRENCY", "").strip()
+    if concurrency_raw:
         try:
-            bullets_result = await bullet_task
-            summary_result = await summary_task
-            results_by_theme[theme_name] = (bullets_result, summary_result)
-            logger.info("Completed rewriting for cluster: %s", theme_name)
-        except Exception as e:
-            logger.error("Failed to rewrite for cluster %s: %s", theme_name, e)
-            results_by_theme[theme_name] = None
+            concurrency = max(1, int(concurrency_raw))
+        except ValueError:
+            concurrency = max(1, len(themes))
+    else:
+        concurrency = max(1, len(themes))
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def rewrite_for_theme(theme_name: str, theme_config: dict):
+        async with semaphore:
+            bullet_task = rewriter.rewrite_bullets_async(
+                original_bullets, theme_name, theme_config
+            )
+            summary_task = rewriter.rewrite_summary_async(
+                original_summary, theme_name, theme_config
+            )
+            bullets_result, summary_result = await asyncio.gather(
+                bullet_task,
+                summary_task,
+                return_exceptions=True,
+            )
+
+        if isinstance(bullets_result, Exception):
+            logger.error(
+                "Bullet rewrite failed for cluster %s: %s",
+                theme_name,
+                bullets_result,
+            )
+            bullets_result = []
+        if isinstance(summary_result, Exception):
+            logger.error(
+                "Summary rewrite failed for cluster %s: %s",
+                theme_name,
+                summary_result,
+            )
+            summary_result = None
+
+        return theme_name, (bullets_result, summary_result)
+
+    logger.info(
+        "Queued GPT rewrite tasks for %d clusters (concurrency=%d)",
+        len(themes),
+        concurrency,
+    )
+
+    rewrite_tasks = [
+        asyncio.create_task(rewrite_for_theme(theme_name, theme_config))
+        for theme_name, theme_config in themes.items()
+    ]
+
+    results_by_theme: dict[str, tuple[object, object]] = {}
+    for theme_name, result in await asyncio.gather(*rewrite_tasks):
+        results_by_theme[theme_name] = result
+        logger.info("Completed rewriting for cluster: %s", theme_name)
 
     # * Generate each variant with rewritten content
     for theme_name, theme_config in themes.items():

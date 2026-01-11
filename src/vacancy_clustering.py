@@ -25,9 +25,9 @@ from sklearn.metrics import silhouette_score
 
 from src.data_extraction import load_vacancy_files
 from src.keyword_engine import (
-    TECH_TAXONOMY,
     extract_keywords_from_text,
     extract_keywords_tfidf,
+    get_tech_taxonomy,
     get_technology_patterns,
 )
 from src.local_embeddings import get_local_embeddings
@@ -352,13 +352,14 @@ class VacancyClusteringPipeline:
         return extract_keywords_tfidf(texts, top_n_per_doc=30)
 
     def _extract_keywords_taxonomy(self, texts: list[str]) -> dict[int, list[str]]:
-        """Stage 1b: Match against TECH_TAXONOMY."""
+        """Stage 1b: Match against the dynamic taxonomy."""
         taxonomy_keywords: dict[int, list[str]] = {}
 
+        taxonomy = get_tech_taxonomy()
         for idx, text in enumerate(texts):
             matches = []
             text_lower = text.lower()
-            for keyword_list in TECH_TAXONOMY.values():
+            for keyword_list in taxonomy.values():
                 for keyword in keyword_list:
                     if keyword in text_lower:
                         matches.append(keyword)
@@ -460,7 +461,8 @@ class VacancyClusteringPipeline:
         categorized = KeywordCategorization()
         keyword_by_norm: dict[str, KeywordCategorization.CategorizedKeyword] = {}
         tech_patterns = get_technology_patterns()
-        all_taxonomy = {kw for kws in TECH_TAXONOMY.values() for kw in kws}
+        taxonomy = get_tech_taxonomy()
+        all_taxonomy = {kw for kws in taxonomy.values() for kw in kws}
 
         for keyword in keywords:
             norm = _normalize_keyword(keyword)

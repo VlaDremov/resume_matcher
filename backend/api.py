@@ -31,14 +31,13 @@ from backend.services import (
     vacancy_service,
     variant_service,
 )
+from src.logging_config import configure_logging
 
 # * Load environment variables
 load_dotenv()
 
-# * Configure logging with timestamps
-LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-if not logging.getLogger().handlers:
-    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+# * Configure logging with timestamps and filenames
+configure_logging()
 
 logger = logging.getLogger("resume_matcher.api")
 

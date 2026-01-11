@@ -18,13 +18,15 @@ from typing import Optional, Type, TypeVar, Union
 
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 # * Configuration
 # * DEFAULT_MODEL: Must support Responses API with Structured Outputs
-# * Supported models: gpt-4o-mini, gpt-4o-2024-08-06, gpt-5-mini, and later models
-DEFAULT_MODEL = "gpt-5-mini"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
-DEFAULT_REASONING_EFFORT = "minimal"
+# * Supported models: gpt-5-mini, and later models
+load_dotenv()
+DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+DEFAULT_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+DEFAULT_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "medium")
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 

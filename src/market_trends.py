@@ -8,11 +8,19 @@ to enrich keyword analysis with real-time market context.
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+from src.cluster_artifacts import (
+    ClusterCategory,
+    DEFAULT_CLUSTER_ARTIFACT,
+    get_cluster_categories,
+    load_cluster_artifact,
+)
 
 logger = logging.getLogger("resume_matcher.market_trends")
 
@@ -25,7 +33,7 @@ class TrendingSkill(BaseModel):
     """A skill with market demand metadata."""
 
     skill: str = Field(description="The skill name")
-    category: str = Field(description="Tech category: research_ml, applied_production, genai_llm")
+    category: str = Field(description="Cluster category slug from the artifact (or general)")
     demand_level: str = Field(description="Demand level: high, medium, low")
     trend: str = Field(description="Trend direction: rising, stable, declining")
 
@@ -63,6 +71,7 @@ class MarketTrendsService:
         self,
         cache_duration_hours: int = 24,
         llm_client=None,
+        artifact_path: str | Path | None = None,
     ):
         """
         Initialize the market trends service.
@@ -75,6 +84,9 @@ class MarketTrendsService:
         self._cache_timestamp: Optional[datetime] = None
         self._cache_duration = timedelta(hours=cache_duration_hours)
         self._llm_client = llm_client
+        self._artifact_path = Path(artifact_path) if artifact_path else DEFAULT_CLUSTER_ARTIFACT
+        self._artifact_mtime_ns: Optional[int] = None
+        self._categories_cache: list[ClusterCategory] = []
         self._load_cache()
 
     @property
@@ -136,6 +148,109 @@ class MarketTrendsService:
             return False
         return datetime.now() - self._cache_timestamp < self._cache_duration
 
+    def _load_cluster_categories(self) -> list[ClusterCategory]:
+        if not self._artifact_path.exists():
+            self._categories_cache = []
+            self._artifact_mtime_ns = None
+            return []
+
+        try:
+            mtime_ns = self._artifact_path.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = None
+
+        if self._categories_cache and self._artifact_mtime_ns == mtime_ns:
+            return self._categories_cache
+
+        try:
+            artifact = load_cluster_artifact(self._artifact_path)
+            categories = get_cluster_categories(artifact)
+        except Exception as exc:
+            logger.warning("Failed to load cluster categories: %s", exc)
+            categories = []
+
+        self._categories_cache = categories
+        self._artifact_mtime_ns = mtime_ns
+        return categories
+
+    def _normalize_category_key(self, value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+    def _build_category_aliases(self, categories: list[ClusterCategory]) -> dict[str, str]:
+        aliases: dict[str, str] = {}
+        for category in categories:
+            for candidate in (category.slug, category.name):
+                if not candidate:
+                    continue
+                key = self._normalize_category_key(candidate)
+                if key:
+                    aliases[key] = category.slug
+                    aliases[key.replace("-", "_")] = category.slug
+        return aliases
+
+    def _fallback_categories(self) -> list[ClusterCategory]:
+        return [
+            ClusterCategory(
+                slug="research_ml",
+                name="Research ML",
+                summary="Deep learning, statistical rigor, model optimization.",
+                keywords=["deep learning", "optimization", "experiments", "statistics"],
+            ),
+            ClusterCategory(
+                slug="applied_production",
+                name="Applied Production",
+                summary="MLOps, deployment, pipelines, monitoring.",
+                keywords=["mlops", "deployment", "pipelines", "monitoring"],
+            ),
+            ClusterCategory(
+                slug="genai_llm",
+                name="GenAI / LLM",
+                summary="LLMs, RAG, agents, prompt engineering.",
+                keywords=["llm", "rag", "agents", "prompt engineering"],
+            ),
+        ]
+
+    def _build_category_prompt(self, categories: list[ClusterCategory]) -> str:
+        lines = ["Focus on these categories (use the slug as the category key):"]
+        for category in categories:
+            details = f"{category.name}."
+            if category.summary:
+                details = f"{details} {category.summary}"
+            if category.keywords:
+                details = f"{details} Keywords: {', '.join(category.keywords[:8])}."
+            lines.append(f"- {category.slug}: {details}")
+        return "\n".join(lines)
+
+    def _coerce_trending_categories(
+        self,
+        trends: MarketTrendsResponse,
+        categories: list[ClusterCategory],
+    ) -> None:
+        if not categories:
+            return
+
+        alias_map = self._build_category_aliases(categories)
+        keyword_map: dict[str, str] = {}
+        for category in categories:
+            for kw in category.keywords:
+                normalized = self._normalize_category_key(kw)
+                if normalized:
+                    keyword_map.setdefault(normalized, category.slug)
+
+        for skill in trends.trending_skills:
+            raw_category = (skill.category or "").strip()
+            raw_key = self._normalize_category_key(raw_category)
+            if raw_key in alias_map:
+                skill.category = alias_map[raw_key]
+                continue
+
+            skill_key = self._normalize_category_key(skill.skill or "")
+            if skill_key in keyword_map:
+                skill.category = keyword_map[skill_key]
+                continue
+
+            skill.category = "general"
+
     async def fetch_trends_async(
         self,
         role_focus: str = "ML Engineer",
@@ -162,24 +277,27 @@ class MarketTrendsService:
                 last_updated=datetime.now().isoformat(),
             )
 
-        system_prompt = """You are a job market analyst specializing in ML/AI/Data roles.
+        categories = self._load_cluster_categories()
+        effective_categories = categories or self._fallback_categories()
+        category_prompt = self._build_category_prompt(effective_categories)
+        allowed_keys = [category.slug for category in effective_categories]
+        allowed_keys_text = ", ".join(allowed_keys)
+
+        system_prompt = f"""You are a job market analyst specializing in ML/AI/Data roles.
 
 Based on your knowledge of current job market trends, provide an analysis of:
 1. Most in-demand skills for ML Engineers and related roles
 2. Emerging technologies gaining traction
 3. Brief market insights
 
-Focus on these categories:
-- research_ml: Deep learning, statistical rigor, model optimization
-- applied_production: MLOps, deployment, pipelines, monitoring
-- genai_llm: LLMs, RAG, agents, prompt engineering
+{category_prompt}
 
 Provide realistic demand levels and trends."""
 
         user_prompt = f"""Analyze current job market trends for {role_focus} positions.
 
 Provide:
-1. 15-20 trending skills with their category (research_ml/applied_production/genai_llm), demand level (high/medium/low), and trend (rising/stable/declining)
+1. 15-20 trending skills with their category (use only: {allowed_keys_text}), demand level (high/medium/low), and trend (rising/stable/declining)
 2. 5-10 emerging technologies that are gaining demand
 3. A brief 2-3 sentence summary of current market conditions
 
@@ -191,6 +309,7 @@ Focus on skills that differentiate candidates in the current job market."""
                 response_model=MarketTrendsResponse,
                 system_prompt=system_prompt,
             )
+            self._coerce_trending_categories(result, effective_categories)
             result.last_updated = datetime.now().isoformat()
 
             # * Update cache

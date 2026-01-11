@@ -18,8 +18,12 @@ import click
 from dotenv import load_dotenv
 from tqdm import tqdm
 
+from src.logging_config import configure_logging
+
 # * Load environment variables from .env file
 load_dotenv()
+# * Configure logging with timestamps and filenames
+configure_logging()
 
 # * Configuration - adjust these paths as needed
 DEFAULT_RESUME_PATH = Path(__file__).parent / "resume.tex"
@@ -68,6 +72,11 @@ def cli():
     help="Compile LaTeX to PDF (requires pdflatex)",
 )
 @click.option(
+    "--gpt-cache/--no-gpt-cache",
+    default=True,
+    help="Use cached GPT rewrites when generating variants",
+)
+@click.option(
     "--use-gpt-rewrite/--no-gpt-rewrite",
     default=False,
     help="Use GPT to genuinely rewrite content per theme (costs ~$0.05, creates meaningfully different variants)",
@@ -77,6 +86,7 @@ def generate(
     output: str,
     clusters_artifact: str,
     compile_pdf: bool,
+    gpt_cache: bool,
     use_gpt_rewrite: bool,
 ):
     """
@@ -127,11 +137,14 @@ def generate(
     try:
         if use_gpt_rewrite:
             click.echo("Using GPT to rewrite content (this may take 30-60 seconds)...")
+            if not gpt_cache:
+                click.echo("GPT rewrite cache: disabled")
         generated = generate_variants_from_clusters(
             resume_path,
             output_dir,
             artifact_path,
             use_gpt_rewrite=use_gpt_rewrite,
+            use_gpt_cache=gpt_cache,
         )
         click.echo(f"\n✓ Generated {len(generated)} LaTeX variants")
     except Exception as e:
@@ -278,8 +291,8 @@ def analyze(vacancies: str, top: int, output: str | None):
     help="Use GPT for enhancement",
 )
 @click.option(
-    "--refresh",
-    is_flag=True,
+    "--refresh/--no-refresh",
+    default=True,
     help="Bypass cached clustering results",
 )
 @click.option(

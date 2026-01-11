@@ -15,6 +15,11 @@ from typing import Optional
 import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+from src.cluster_artifacts import (
+    DEFAULT_CLUSTER_ARTIFACT,
+    get_cluster_categories,
+    load_cluster_artifact,
+)
 from src.data_extraction import load_vacancy_files
 
 # * Load spaCy model
@@ -26,7 +31,7 @@ except OSError:
 
 
 # * Predefined technology taxonomy for better keyword recognition
-TECH_TAXONOMY = {
+DEFAULT_TECH_TAXONOMY = {
     "research_ml": [
         "deep learning", "neural network", "neural networks", "pytorch", "tensorflow",
         "statistical analysis", "statistical", "optimization", "research", "experiments",
@@ -49,10 +54,9 @@ TECH_TAXONOMY = {
     ],
 }
 
-# * Flatten taxonomy for quick lookup
-ALL_TECH_KEYWORDS = set()
-for keywords in TECH_TAXONOMY.values():
-    ALL_TECH_KEYWORDS.update(keywords)
+_TAXONOMY_CACHE: Optional[dict[str, list[str]]] = None
+_TAXONOMY_MTIME: Optional[int] = None
+_TAXONOMY_SOURCE: Optional[str] = None
 
 DEFAULT_VACANCIES_DIR = Path(__file__).resolve().parents[1] / "vacancies"
 VACANCIES_DIR = Path(os.getenv("VACANCIES_DIR", str(DEFAULT_VACANCIES_DIR)))
@@ -62,6 +66,86 @@ VACANCY_BASE_MAX_BOOST = float(os.getenv("VACANCY_BASE_MAX_BOOST", "5.0"))
 
 _VACANCY_BASE_CACHE = None
 _VACANCY_BASE_SIGNATURE = None
+
+
+def _normalize_taxonomy_keyword(keyword: str) -> str:
+    return " ".join(keyword.lower().split())
+
+
+def _load_cluster_taxonomy(artifact_path: Path) -> Optional[dict[str, list[str]]]:
+    if not artifact_path.exists():
+        return None
+
+    try:
+        artifact = load_cluster_artifact(artifact_path)
+    except Exception:
+        return None
+
+    categories = get_cluster_categories(artifact)
+    if not categories:
+        return None
+
+    taxonomy: dict[str, list[str]] = {}
+    for category in categories:
+        seen = set()
+        keywords: list[str] = []
+        for kw in category.keywords:
+            normalized = _normalize_taxonomy_keyword(kw)
+            if not normalized:
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            keywords.append(normalized)
+        taxonomy[category.slug] = keywords
+
+    return taxonomy
+
+
+def get_tech_taxonomy(
+    artifact_path: str | Path | None = None,
+    refresh: bool = False,
+) -> dict[str, list[str]]:
+    """
+    Get the technology taxonomy, preferring cluster-derived categories when available.
+    """
+    global _TAXONOMY_CACHE, _TAXONOMY_MTIME, _TAXONOMY_SOURCE
+
+    resolved_path = Path(artifact_path) if artifact_path else DEFAULT_CLUSTER_ARTIFACT
+    source_key = str(resolved_path)
+
+    mtime_ns = None
+    if resolved_path.exists():
+        try:
+            mtime_ns = resolved_path.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = None
+
+    if (
+        not refresh
+        and _TAXONOMY_CACHE is not None
+        and _TAXONOMY_SOURCE == source_key
+        and _TAXONOMY_MTIME == mtime_ns
+    ):
+        return _TAXONOMY_CACHE
+
+    taxonomy = _load_cluster_taxonomy(resolved_path) or DEFAULT_TECH_TAXONOMY
+
+    _TAXONOMY_CACHE = taxonomy
+    _TAXONOMY_MTIME = mtime_ns
+    _TAXONOMY_SOURCE = source_key
+    return taxonomy
+
+
+def get_all_tech_keywords(
+    artifact_path: str | Path | None = None,
+) -> set[str]:
+    """Flatten taxonomy into a set of keywords for fast matching."""
+    taxonomy = get_tech_taxonomy(artifact_path=artifact_path)
+    all_keywords: set[str] = set()
+    for keywords in taxonomy.values():
+        all_keywords.update(keywords)
+    return all_keywords
 
 
 def _vacancy_files_signature(vacancies_dir: Path) -> tuple[tuple[str, int, int], ...]:
@@ -151,7 +235,8 @@ def extract_keywords_from_text(
 
     # * 2. Match against technology taxonomy
     text_lower = text.lower()
-    for keyword in ALL_TECH_KEYWORDS:
+    all_tech_keywords = get_all_tech_keywords()
+    for keyword in all_tech_keywords:
         if keyword in text_lower:
             # * Count occurrences
             count = len(re.findall(re.escape(keyword), text_lower))
@@ -313,14 +398,15 @@ def cluster_keywords(
     Returns:
         Dictionary mapping category name to list of keywords.
     """
-    clustered = {category: [] for category in TECH_TAXONOMY}
+    taxonomy = get_tech_taxonomy()
+    clustered = {category: [] for category in taxonomy}
     clustered["general"] = []
 
     for keyword in keywords:
         keyword_lower = keyword.lower()
         assigned = False
 
-        for category, category_keywords in TECH_TAXONOMY.items():
+        for category, category_keywords in taxonomy.items():
             # * Check if keyword matches any category keyword
             for cat_kw in category_keywords:
                 if cat_kw in keyword_lower or keyword_lower in cat_kw:

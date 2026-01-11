@@ -9,10 +9,23 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from src.vacancy_clustering import ClusterResult
+if TYPE_CHECKING:
+    from src.vacancy_clustering import ClusterResult
+
+DEFAULT_CLUSTER_ARTIFACT = Path("output/vacancy_clusters.json")
+
+
+class ClusterCategory(BaseModel):
+    """Derived category metadata based on a cluster."""
+
+    slug: str
+    name: str
+    summary: str
+    keywords: list[str] = Field(default_factory=list)
 
 
 class ClusterArtifact(BaseModel):
@@ -30,13 +43,14 @@ class ClusterArtifact(BaseModel):
         defining_skills: list[str]
         profile_text: str
 
-    schema_version: int = 1
+    schema_version: int = 2
     generated_at: str
     vacancies_dir: str
     signature: list[list[object]]
     num_clusters: int
     pipeline_stats: dict[str, object] = Field(default_factory=dict)
     clusters: list[Cluster] = Field(default_factory=list)
+    categories: list[ClusterCategory] = Field(default_factory=list)
 
 
 def _utc_now_iso() -> str:
@@ -70,6 +84,47 @@ def _build_profile_text(cluster: ClusterResult.Cluster) -> str:
     return " ".join(part.strip().rstrip(".") + "." for part in parts if part).strip()
 
 
+def _dedupe_keywords(items: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for item in items:
+        cleaned = item.strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result
+
+
+def _build_category_keywords_from_cluster(cluster: ClusterArtifact.Cluster) -> list[str]:
+    return _dedupe_keywords(
+        cluster.top_keywords
+        + cluster.defining_technologies
+        + cluster.defining_skills
+    )
+
+
+def get_cluster_categories(artifact: ClusterArtifact) -> list[ClusterCategory]:
+    """Return artifact categories, falling back to derived cluster metadata."""
+    if artifact.categories:
+        return artifact.categories
+
+    categories: list[ClusterCategory] = []
+    for cluster in artifact.clusters:
+        categories.append(
+            ClusterCategory(
+                slug=cluster.slug,
+                name=cluster.name,
+                summary=cluster.summary,
+                keywords=_build_category_keywords_from_cluster(cluster),
+            )
+        )
+    return categories
+
+
 def build_cluster_artifact(
     result: ClusterResult,
     vacancies_dir: Path,
@@ -94,14 +149,26 @@ def build_cluster_artifact(
         )
 
     resolved_clusters = num_clusters if num_clusters > 0 else len(clusters)
+    categories: list[ClusterCategory] = []
+    for cluster in clusters:
+        categories.append(
+            ClusterCategory(
+                slug=cluster.slug,
+                name=cluster.name,
+                summary=cluster.summary,
+                keywords=_build_category_keywords_from_cluster(cluster),
+            )
+        )
+
     return ClusterArtifact(
-        schema_version=1,
+        schema_version=2,
         generated_at=_utc_now_iso(),
         vacancies_dir=str(vacancies_dir),
         signature=_vacancy_signature(vacancies_dir),
         num_clusters=resolved_clusters,
         pipeline_stats=result.pipeline_stats or {},
         clusters=clusters,
+        categories=categories,
     )
 
 

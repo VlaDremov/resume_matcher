@@ -60,15 +60,17 @@ class BulletRewriter:
     by rewriting bullets, summaries, and skill emphasis.
     """
 
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None, use_cache: bool = True):
         """
         Initialize the bullet rewriter.
 
         Args:
             llm_client: Optional pre-configured LLM client.
+            use_cache: Whether to read/write cached rewrites.
         """
         self._llm_client = llm_client
         self._cache: dict[str, dict] = {}
+        self._use_cache = use_cache
         self._load_cache()
 
     @property
@@ -85,6 +87,8 @@ class BulletRewriter:
 
     def _load_cache(self):
         """Load rewrite cache from disk."""
+        if not self._use_cache:
+            return
         if CACHE_PATH.exists():
             try:
                 with open(CACHE_PATH, "r", encoding="utf-8") as f:
@@ -96,6 +100,8 @@ class BulletRewriter:
 
     def _save_cache(self):
         """Save rewrite cache to disk."""
+        if not self._use_cache:
+            return
         try:
             CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(CACHE_PATH, "w", encoding="utf-8") as f:
@@ -209,7 +215,7 @@ Rewrite for {theme_config.get('name', theme_name)} roles."""
 
         # * Check cache first
         cache_key = self._get_cache_key("\n".join(bullets), theme_name)
-        if cache_key in self._cache:
+        if self._use_cache and cache_key in self._cache:
             logger.info("Using cached bullet rewrites for theme %s", theme_name)
             cached = self._cache[cache_key]
             return [RewrittenBullet(**item) for item in cached]
@@ -233,8 +239,9 @@ Rewrite for {theme_config.get('name', theme_name)} roles."""
             )
 
             # * Cache the results
-            self._cache[cache_key] = [item.model_dump() for item in result.bullets]
-            self._save_cache()
+            if self._use_cache:
+                self._cache[cache_key] = [item.model_dump() for item in result.bullets]
+                self._save_cache()
 
             logger.info(
                 "Rewrote %d bullets for theme %s",
@@ -281,7 +288,7 @@ Rewrite for {theme_config.get('name', theme_name)} roles."""
         """
         # * Check cache
         cache_key = self._get_cache_key(f"summary:{summary}", theme_name)
-        if cache_key in self._cache:
+        if self._use_cache and cache_key in self._cache:
             logger.info("Using cached summary rewrite for theme %s", theme_name)
             return SummaryRewriteResponse(**self._cache[cache_key])
 
@@ -301,8 +308,9 @@ Rewrite for {theme_config.get('name', theme_name)} roles."""
             )
 
             # * Cache the result
-            self._cache[cache_key] = result.model_dump()
-            self._save_cache()
+            if self._use_cache:
+                self._cache[cache_key] = result.model_dump()
+                self._save_cache()
 
             logger.info("Rewrote summary for theme %s", theme_name)
             return result
