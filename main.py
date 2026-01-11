@@ -73,12 +73,12 @@ def cli():
 )
 @click.option(
     "--gpt-cache/--no-gpt-cache",
-    default=True,
+    default=False,
     help="Use cached GPT rewrites when generating variants",
 )
 @click.option(
     "--use-gpt-rewrite/--no-gpt-rewrite",
-    default=False,
+    default=True,
     help="Use GPT to genuinely rewrite content per theme (costs ~$0.05, creates meaningfully different variants)",
 )
 def generate(

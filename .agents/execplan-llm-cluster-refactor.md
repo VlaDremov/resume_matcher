@@ -16,6 +16,7 @@ After this change, the vacancy cluster artifact becomes the single source of tru
 - [x] (2026-01-11 22:23Z) Updated resume generation category ordering to be cluster-driven with cached ordering per cluster slug.
 - [x] (2026-01-11 22:23Z) Updated market trends prompts and response handling to use cluster-derived categories.
 - [x] (2026-01-11 22:23Z) Parallelized GPT resume rewrites per cluster with a concurrency control.
+- [x] (2026-01-11 23:04Z) Set CLI defaults to always use GPT and disable rewrite caching for clusterization and resume generation.
 - [ ] (2026-01-11 22:23Z) Run validation commands in this plan and record observed outputs.
 
 ## Surprises & Discoveries
@@ -48,6 +49,9 @@ After this change, the vacancy cluster artifact becomes the single source of tru
   Date/Author: 2026-01-11, Codex.
 - Decision: Default GPT rewrite concurrency to the number of clusters, with an environment override via `GPT_REWRITE_CONCURRENCY`.
   Rationale: Full fan-out makes resume rewriting time bound by the slowest cluster while allowing explicit throttling when rate limits require it.
+  Date/Author: 2026-01-11, Codex.
+- Decision: Default CLI flags to always use GPT and disable caches for clustering and GPT resume rewrites.
+  Rationale: The requested workflow avoids cached outputs and ensures LLM enhancement is always applied.
   Date/Author: 2026-01-11, Codex.
 
 ## Outcomes & Retrospective
@@ -176,3 +180,5 @@ Use forward references for type hints to keep runtime imports acyclic.
 Plan created on 2026-01-11 to satisfy the request for a cluster-driven LLM usage and taxonomy refactor, with async GPT resume generation and dynamic categories derived from the initial clustering artifact.
 
 Plan updated on 2026-01-11 to record the implemented schema changes, dynamic taxonomy behavior, async GPT fan-out, and to align the Interfaces section with the concrete code paths now in place.
+
+Plan updated on 2026-01-11 to note the CLI defaults for GPT usage and disabled caching in clusterization and resume generation.
